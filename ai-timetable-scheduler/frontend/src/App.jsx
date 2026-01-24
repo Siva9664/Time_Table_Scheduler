@@ -8,11 +8,14 @@ import SubjectManager from './components/Admin/SubjectManager';
 import FacultyManager from './components/Admin/FacultyManager';
 import RoomManager from './components/Admin/RoomManager';
 import BatchManager from './components/Admin/BatchManager';
+import FacultyMapping from './components/Admin/FacultyMapping';
 import TimetableGenerator from './components/Timetable/TimetableGenerator';
 import TimetableView from './components/Timetable/TimetableView';
 import Settings from './components/Admin/Settings';
 import Sidebar from './components/Layout/Sidebar';
 import { isAuthenticated, removeToken } from './utils/auth';
+
+import { ToastProvider } from './context/ToastContext';
 
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(isAuthenticated());
@@ -40,24 +43,27 @@ function App() {
 
 
   return (
-    <Router>
-      <Routes>
-        <Route path="/login" element={isLoggedIn ? <Navigate to="/" /> : <Login onLogin={handleLogin} />} />
+    <ToastProvider>
+      <Router>
+        <Routes>
+          <Route path="/login" element={isLoggedIn ? <Navigate to="/" /> : <Login onLogin={handleLogin} />} />
 
-        <Route path="/" element={<ProtectedRoute><MainLayout /></ProtectedRoute>}>
-          <Route index element={<Dashboard />} />
-          <Route path="departments" element={<DepartmentManager />} />
-          <Route path="batches" element={<BatchManager />} />
-          <Route path="classes" element={<ClassManager />} />
-          <Route path="subjects" element={<SubjectManager />} />
-          <Route path="faculty" element={<FacultyManager />} />
-          <Route path="rooms" element={<RoomManager />} />
-          <Route path="generate" element={<TimetableGenerator />} />
-          <Route path="view" element={<TimetableView />} />
-          <Route path="settings" element={<Settings />} />
-        </Route>
-      </Routes>
-    </Router>
+          <Route path="/" element={<ProtectedRoute><MainLayout /></ProtectedRoute>}>
+            <Route index element={<Dashboard />} />
+            <Route path="departments" element={<DepartmentManager />} />
+            <Route path="batches" element={<BatchManager />} />
+            <Route path="classes" element={<ClassManager />} />
+            <Route path="subjects" element={<SubjectManager />} />
+            <Route path="faculty" element={<FacultyManager />} />
+            <Route path="rooms" element={<RoomManager />} />
+            <Route path="mapping" element={<FacultyMapping />} />
+            <Route path="generate" element={<TimetableGenerator />} />
+            <Route path="view" element={<TimetableView />} />
+            <Route path="settings" element={<Settings />} />
+          </Route>
+        </Routes>
+      </Router>
+    </ToastProvider>
   );
 }
 

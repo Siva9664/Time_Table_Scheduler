@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { subjectAPI, departmentAPI, batchAPI, facultyAPI, classAPI } from '../../services/api';
+import { useToast } from '../../context/ToastContext';
 
 export default function SubjectManager() {
   const [subjects, setSubjects] = useState([]);
@@ -10,6 +11,7 @@ export default function SubjectManager() {
   const [faculty, setFaculty] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const { register, handleSubmit, reset } = useForm();
+  const { showToast } = useToast();
 
   useEffect(() => { loadData(); }, []);
 
@@ -25,6 +27,7 @@ export default function SubjectManager() {
       setBatches(batchRes.data);
     } catch (error) {
       console.error('Failed to load data', error);
+      showToast('Failed to load data', 'error');
     }
   };
 
@@ -41,9 +44,9 @@ export default function SubjectManager() {
       reset();
       setShowForm(false);
       loadData();
-      alert('Subject created!');
+      showToast('Subject created!', 'success');
     } catch (error) {
-      alert(error.response?.data?.detail || 'Failed to create subject');
+      showToast(error.response?.data?.detail || 'Failed to create subject', 'error');
     }
   };
 

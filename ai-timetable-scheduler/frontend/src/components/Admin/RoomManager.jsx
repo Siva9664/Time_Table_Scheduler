@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { roomAPI } from '../../services/api';
+import { useToast } from '../../context/ToastContext';
 
 export default function RoomManager() {
   const [rooms, setRooms] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const { register, handleSubmit, reset } = useForm();
+  const { showToast } = useToast();
 
   useEffect(() => { loadRooms(); }, []);
 
@@ -15,6 +17,7 @@ export default function RoomManager() {
       setRooms(res.data);
     } catch (error) {
       console.error('Failed to load rooms', error);
+      showToast('Failed to load rooms', 'error');
     }
   };
 
@@ -24,10 +27,9 @@ export default function RoomManager() {
       reset();
       setShowForm(false);
       loadRooms();
-      loadRooms();
-      alert('Room created!');
+      showToast('Room created!', 'success');
     } catch (error) {
-      alert(error.response?.data?.detail || 'Failed to create room');
+      showToast(error.response?.data?.detail || 'Failed to create room', 'error');
     }
   };
 

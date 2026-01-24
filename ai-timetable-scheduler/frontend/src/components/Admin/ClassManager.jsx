@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { classAPI, departmentAPI, batchAPI } from '../../services/api';
+import { useToast } from '../../context/ToastContext';
+import ConfirmationModal from '../Layout/ConfirmationModal';
 
 export default function ClassManager() {
   const [classes, setClasses] = useState([]);
@@ -8,6 +10,11 @@ export default function ClassManager() {
   const [batches, setBatches] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const { register, handleSubmit, reset } = useForm();
+  const { showToast } = useToast();
+
+  // Modal State
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [classToDelete, setClassToDelete] = useState(null);
 
   useEffect(() => { loadData(); }, []);
 
@@ -23,6 +30,7 @@ export default function ClassManager() {
       setBatches(batchRes.data);
     } catch (error) {
       console.error('Failed to load data', error);
+      showToast('Failed to load data', 'error');
     }
   };
 
@@ -38,17 +46,26 @@ export default function ClassManager() {
       reset();
       setShowForm(false);
       loadData();
-      alert('Class created!');
+      showToast('Class created!', 'success');
     } catch (error) {
-      alert(error.response?.data?.detail || 'Failed to create class');
+      showToast(error.response?.data?.detail || 'Failed to create class', 'error');
     }
   };
 
-  const handleDelete = async (id) => {
-    if (confirm('Delete?')) {
-      await classAPI.delete(id);
+  const confirmDelete = async () => {
+    if (!classToDelete) return;
+    try {
+      await classAPI.delete(classToDelete);
       loadData();
+      showToast('Class deleted!', 'success');
+    } catch (error) {
+      showToast(error.response?.data?.detail || 'Failed to delete class', 'error');
     }
+  };
+
+  const handleDeleteClick = (id) => {
+    setClassToDelete(id);
+    setIsDeleteModalOpen(true);
   };
 
   const getBatchName = (batchId) => {
@@ -58,6 +75,14 @@ export default function ClassManager() {
 
   return (
     <div>
+      <ConfirmationModal
+        isOpen={isDeleteModalOpen}
+        onClose={() => setIsDeleteModalOpen(false)}
+        onConfirm={confirmDelete}
+        title="Delete Class"
+        message="Are you sure you want to delete this class? This action cannot be undone."
+      />
+
       <div className="flex justify-between mb-6">
         <h1 className="text-3xl font-bold">Classes</h1>
         <button onClick={() => setShowForm(!showForm)} className="btn btn-primary">{showForm ? 'Cancel' : '+ Add Class'}</button>
@@ -102,7 +127,7 @@ export default function ClassManager() {
             <div key={cls.id} className="card">
               <div className="flex justify-between mb-2">
                 <h3 className="text-xl font-bold">{cls.name} {cls.section}</h3>
-                <button onClick={() => handleDelete(cls.id)} className="text-red-600 hover:text-red-800 font-semibold">Delete</button>
+                <button onClick={() => handleDeleteClick(cls.id)} className="text-red-600 hover:text-red-800 font-semibold">Delete</button>
               </div>
               <p>Semester: {cls.semester}</p>
               <p>Students: {cls.student_count}</p>

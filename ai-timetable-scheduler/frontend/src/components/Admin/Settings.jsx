@@ -1,29 +1,26 @@
 import React, { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { authAPI } from '../../services/api';
+import { useToast } from '../../context/ToastContext';
 
 const Settings = () => {
     const { register, handleSubmit, formState: { errors }, reset, watch } = useForm();
-    const [message, setMessage] = useState({ type: '', text: '' });
+    const { showToast } = useToast();
     const [loading, setLoading] = useState(false);
 
     const newPassword = watch('new_password');
 
     const onSubmit = async (data) => {
         setLoading(true);
-        setMessage({ type: '', text: '' });
         try {
             await authAPI.changePassword({
                 current_password: data.current_password,
                 new_password: data.new_password
             });
-            setMessage({ type: 'success', text: 'Password updated successfully!' });
+            showToast('Password updated successfully!', 'success');
             reset();
         } catch (error) {
-            setMessage({
-                type: 'error',
-                text: error.response?.data?.detail || 'Failed to update password'
-            });
+            showToast(error.response?.data?.detail || 'Failed to update password', 'error');
         } finally {
             setLoading(false);
         }
@@ -35,13 +32,6 @@ const Settings = () => {
 
             <div className="bg-white rounded-lg shadow-md p-6">
                 <h3 className="text-lg font-semibold text-gray-700 mb-4">Change Password</h3>
-
-                {message.text && (
-                    <div className={`p-4 rounded-md mb-4 ${message.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'
-                        }`}>
-                        {message.text}
-                    </div>
-                )}
 
                 <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
                     <div>

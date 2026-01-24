@@ -1,12 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { facultyAPI, departmentAPI } from '../../services/api';
+import { useToast } from '../../context/ToastContext';
+import ConfirmationModal from '../Layout/ConfirmationModal';
 
 export default function FacultyManager() {
   const [faculty, setFaculty] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const { register, handleSubmit, reset } = useForm();
+  const { showToast } = useToast();
+
+  // Modal State
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [facultyToDelete, setFacultyToDelete] = useState(null);
 
   useEffect(() => { loadData(); }, []);
 
@@ -19,17 +26,23 @@ export default function FacultyManager() {
       setDepartments(deptRes.data);
     } catch (error) {
       console.error('Failed to load data', error);
+      showToast('Failed to load data', 'error');
     }
   };
 
-  const handleDelete = async (id) => {
-    if (window.confirm('Are you sure you want to delete this faculty?')) {
-      try {
-        await facultyAPI.delete(id);
-        loadData();
-      } catch (error) {
-        alert(error.response?.data?.detail || 'Failed to delete faculty');
-      }
+  const handleDeleteClick = (id) => {
+    setFacultyToDelete(id);
+    setIsDeleteModalOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!facultyToDelete) return;
+    try {
+      await facultyAPI.delete(facultyToDelete);
+      loadData();
+      showToast('Faculty deleted!', 'success');
+    } catch (error) {
+      showToast(error.response?.data?.detail || 'Failed to delete faculty', 'error');
     }
   };
 
@@ -44,14 +57,22 @@ export default function FacultyManager() {
       reset();
       setShowForm(false);
       loadData();
-      alert('Faculty created!');
+      showToast('Faculty created!', 'success');
     } catch (error) {
-      alert(error.response?.data?.detail || 'Failed to create faculty');
+      showToast(error.response?.data?.detail || 'Failed to create faculty', 'error');
     }
   };
 
   return (
     <div>
+      <ConfirmationModal
+        isOpen={isDeleteModalOpen}
+        onClose={() => setIsDeleteModalOpen(false)}
+        onConfirm={confirmDelete}
+        title="Delete Faculty"
+        message="Are you sure you want to delete this faculty member?"
+      />
+
       <div className="flex justify-between mb-6">
         <h1 className="text-3xl font-bold">Faculty</h1>
         <button onClick={() => setShowForm(!showForm)} className="btn btn-primary">{showForm ? 'Cancel' : '+ Add'}</button>
@@ -76,8 +97,8 @@ export default function FacultyManager() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {faculty.map(f => (
             <div key={f.id} className="card relative group">
-              <button 
-                onClick={() => handleDelete(f.id)}
+              <button
+                onClick={() => handleDeleteClick(f.id)}
                 className="absolute top-2 right-2 text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity"
                 title="Delete Faculty"
               >

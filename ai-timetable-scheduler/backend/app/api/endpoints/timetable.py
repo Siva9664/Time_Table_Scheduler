@@ -218,7 +218,14 @@ def generate_timetable(request: TimetableGenerateRequest, db: Session = Depends(
 
 @router.get("/timetables", response_model=List[TimetableResponse])
 def list_timetables(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    return db.query(Timetable).order_by(Timetable.created_at.desc()).all()
+    timetables = db.query(Timetable).order_by(Timetable.created_at.desc()).all()
+    # Filter out or fix invalid schedule_data
+    valid_timetables = []
+    for t in timetables:
+        if t.schedule_data is None:
+            t.schedule_data = {}
+        valid_timetables.append(t)
+    return valid_timetables
 
 @router.get("/timetables/{id}", response_model=TimetableResponse)
 def get_timetable(id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

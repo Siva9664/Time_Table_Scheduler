@@ -1,11 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { batchAPI } from '../../services/api';
+import { useToast } from '../../context/ToastContext';
+import ConfirmationModal from '../Layout/ConfirmationModal';
 
 export default function BatchManager() {
     const [batches, setBatches] = useState([]);
     const [showForm, setShowForm] = useState(false);
     const { register, handleSubmit, reset, setValue } = useForm();
+    const { showToast } = useToast();
+
+    // Modal State
+    const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+    const [batchToDelete, setBatchToDelete] = useState(null);
 
     useEffect(() => { loadBatches(); }, []);
 
@@ -15,6 +22,7 @@ export default function BatchManager() {
             setBatches(res.data);
         } catch (error) {
             console.error("Failed to load batches", error);
+            showToast("Failed to load batches", "error");
         }
     };
 
@@ -39,20 +47,38 @@ export default function BatchManager() {
             reset();
             setShowForm(false);
             loadBatches();
+            showToast("Batch created successfully!", "success");
         } catch (error) {
-            alert("Failed to create batch: " + error.message);
+            showToast("Failed to create batch: " + error.message, "error");
         }
     };
 
-    const handleDelete = async (id) => {
-        if (window.confirm("Delete this batch?")) {
-            await batchAPI.delete(id);
+    const confirmDelete = async () => {
+        if (!batchToDelete) return;
+        try {
+            await batchAPI.delete(batchToDelete);
             loadBatches();
+            showToast("Batch deleted!", "success");
+        } catch (error) {
+            showToast("Failed to delete batch", "error");
         }
+    };
+
+    const handleDeleteClick = (id) => {
+        setBatchToDelete(id);
+        setIsDeleteModalOpen(true);
     };
 
     return (
         <div>
+            <ConfirmationModal
+                isOpen={isDeleteModalOpen}
+                onClose={() => setIsDeleteModalOpen(false)}
+                onConfirm={confirmDelete}
+                title="Delete Batch"
+                message="Are you sure you want to delete this batch configuration?"
+            />
+
             <div className="flex justify-between mb-6">
                 <h1 className="text-3xl font-bold">Batch Configurations</h1>
                 <button onClick={() => setShowForm(!showForm)} className="btn btn-primary">{showForm ? 'Cancel' : '+ Add Batch'}</button>
@@ -95,7 +121,7 @@ export default function BatchManager() {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {batches.map(b => (
                         <div key={b.id} className="card relative group">
-                            <button onClick={() => handleDelete(b.id)} className="absolute top-2 right-2 text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">Delete</button>
+                            <button onClick={() => handleDeleteClick(b.id)} className="absolute top-2 right-2 text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">Delete</button>
                             <h3 className="font-bold text-lg mb-2">{b.name}</h3>
                             <div className="text-sm text-gray-600 space-y-1">
                                 <p>🕒 {b.start_time} - {b.end_time}</p>

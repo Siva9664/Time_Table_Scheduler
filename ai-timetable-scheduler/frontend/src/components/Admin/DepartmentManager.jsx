@@ -1,12 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { departmentAPI } from '../../services/api';
+import { useToast } from '../../context/ToastContext';
+import ConfirmationModal from '../Layout/ConfirmationModal';
 
 export default function DepartmentManager() {
   const [departments, setDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const { register, handleSubmit, reset, formState: { errors } } = useForm();
+  const { showToast } = useToast();
+
+  // Confirmation Modal State
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [departmentToDelete, setDepartmentToDelete] = useState(null);
 
   useEffect(() => {
     loadDepartments();
@@ -18,6 +25,7 @@ export default function DepartmentManager() {
       setDepartments(response.data);
     } catch (error) {
       console.error('Failed to load departments', error);
+      showToast('Failed to load departments', 'error');
     } finally {
       setLoading(false);
     }
@@ -29,25 +37,38 @@ export default function DepartmentManager() {
       reset();
       setShowForm(false);
       loadDepartments();
-      alert('Department created!');
+      showToast('Department created!', 'success');
     } catch (error) {
-      alert(error.response?.data?.detail || 'Failed to create');
+      showToast(error.response?.data?.detail || 'Failed to create', 'error');
     }
   };
 
-  const handleDelete = async (id) => {
-    if (!confirm('Delete this department?')) return;
+  const confirmDelete = async () => {
+    if (!departmentToDelete) return;
     try {
-      await departmentAPI.delete(id);
+      await departmentAPI.delete(departmentToDelete);
       loadDepartments();
-      alert('Deleted!');
+      showToast('Deleted!', 'success');
     } catch (error) {
-      alert(error.response?.data?.detail || 'Failed to delete');
+      showToast(error.response?.data?.detail || 'Failed to delete', 'error');
     }
+  };
+
+  const handleDeleteClick = (id) => {
+    setDepartmentToDelete(id);
+    setIsDeleteModalOpen(true);
   };
 
   return (
     <div>
+      <ConfirmationModal
+        isOpen={isDeleteModalOpen}
+        onClose={() => setIsDeleteModalOpen(false)}
+        onConfirm={confirmDelete}
+        title="Delete Department"
+        message="Are you sure you want to delete this department? This action cannot be undone."
+      />
+
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">Departments</h1>
         <button onClick={() => setShowForm(!showForm)} className="btn btn-primary">
@@ -85,7 +106,7 @@ export default function DepartmentManager() {
             <div key={dept.id} className="card">
               <div className="flex justify-between items-start mb-2">
                 <h3 className="text-xl font-bold">{dept.name}</h3>
-                <button onClick={() => handleDelete(dept.id)} className="text-red-600 hover:text-red-800 font-semibold">Delete</button>
+                <button onClick={() => handleDeleteClick(dept.id)} className="text-red-600 hover:text-red-800 font-semibold">Delete</button>
               </div>
               <p>Code: <span className="font-semibold">{dept.code}</span></p>
               <p className="text-sm text-gray-500 mt-2">Created: {new Date(dept.created_at).toLocaleDateString()}</p>

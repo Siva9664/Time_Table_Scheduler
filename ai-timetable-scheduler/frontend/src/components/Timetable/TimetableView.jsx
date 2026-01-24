@@ -1,10 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { timetableAPI } from '../../services/api';
+import { useToast } from '../../context/ToastContext';
+import ConfirmationModal from '../Layout/ConfirmationModal';
 
 export default function TimetableView() {
   const [timetables, setTimetables] = useState([]);
   const [selected, setSelected] = useState(null);
   const [activeTab, setActiveTab] = useState('classes'); // 'classes', 'faculty', 'rooms'
+  const { showToast } = useToast();
+
+  // Modal State
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [timetableToDelete, setTimetableToDelete] = useState(null);
 
   useEffect(() => { loadTimetables(); }, []);
 
@@ -14,6 +21,7 @@ export default function TimetableView() {
       setTimetables(res.data);
     } catch (error) {
       console.error("Failed to load timetables");
+      showToast("Failed to load timetables", "error");
     }
   };
 
@@ -23,15 +31,25 @@ export default function TimetableView() {
       setSelected(res.data);
     } catch (error) {
       console.error("Failed to load details");
+      showToast("Failed to load details", "error");
     }
   };
 
-  const handleDelete = async (e, id) => {
+  const handleDelete = (e, id) => {
     e.stopPropagation();
-    if (window.confirm('Delete this timetable?')) {
-      await timetableAPI.delete(id);
-      setTimetables(timetables.filter(t => t.id !== id));
-      if (selected?.id === id) setSelected(null);
+    setTimetableToDelete(id);
+    setIsDeleteModalOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!timetableToDelete) return;
+    try {
+      await timetableAPI.delete(timetableToDelete);
+      setTimetables(timetables.filter(t => t.id !== timetableToDelete));
+      if (selected?.id === timetableToDelete) setSelected(null);
+      showToast("Timetable deleted!", "success");
+    } catch (error) {
+      showToast("Failed to delete timetable", "error");
     }
   };
 
@@ -191,6 +209,14 @@ export default function TimetableView() {
 
   return (
     <div className="min-h-screen pb-12">
+      <ConfirmationModal
+        isOpen={isDeleteModalOpen}
+        onClose={() => setIsDeleteModalOpen(false)}
+        onConfirm={confirmDelete}
+        title="Delete Timetable"
+        message="Are you sure you want to delete this timetable? This action cannot be undone."
+      />
+
       <h1 className="text-3xl font-bold text-gray-900 mb-8">Timetables Directory</h1>
 
       {/* List of Timetables */}
@@ -212,7 +238,7 @@ export default function TimetableView() {
               <p className="text-gray-600 mb-4">{t.academic_year} • Semester {t.semester}</p>
               <div className="flex justify-between items-center text-sm">
                 <span className={`px-2 py-1 rounded-full ${t.solver_status === 'OPTIMAL' ? 'bg-green-100 text-green-700' :
-                    t.solver_status === 'FEASIBLE' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'
+                  t.solver_status === 'FEASIBLE' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'
                   }`}>
                   {t.solver_status}
                 </span>
@@ -253,8 +279,8 @@ export default function TimetableView() {
                     key={tab}
                     onClick={() => setActiveTab(tab)}
                     className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === tab
-                        ? 'bg-white text-primary-600 shadow-sm'
-                        : 'text-gray-600 hover:text-gray-900'
+                      ? 'bg-white text-primary-600 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-900'
                       }`}
                   >
                     {tab.charAt(0).toUpperCase() + tab.slice(1)} View

@@ -57,7 +57,7 @@ class SubjectBase(BaseModel):
     hours_per_week: int
     requires_lab: bool = False
     department_id: Optional[int] = None
-    batch_id: int
+    batch_id: Optional[int] = None
     class_id: Optional[int] = None
     faculty_id: Optional[int] = None
 
@@ -79,6 +79,7 @@ class SubjectUpdate(BaseModel):
 class SubjectResponse(SubjectBase):
     id: int
     created_at: datetime
+    assigned_class: Optional[ClassResponse] = None
     class Config:
         from_attributes = True
 
@@ -144,7 +145,7 @@ class TimetableResponse(BaseModel):
     schedule_data: Dict[str, Any]
     constraints_used: Dict[str, Any]
     solver_status: str
-    solve_time_seconds: int
+    solve_time_seconds: float
     created_at: datetime
     class Config:
         from_attributes = True

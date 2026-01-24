@@ -9,9 +9,9 @@ class Settings(BaseSettings):
     DATABASE_URL: str = f"sqlite:///{os.path.join(BASE_DIR, 'sql_app.db')}"
     SECRET_KEY: str = "supersecretkey123"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 4320 # 3 days
     ALLOWED_ORIGINS: str = "http://localhost:3002,http://localhost:3000,http://localhost:3003,http://localhost:5173"
-    SOLVER_TIME_LIMIT_SECONDS: int = 300
+    SOLVER_TIME_LIMIT_SECONDS: int = 60
     GEMINI_API_KEY: str = ""
 
     @property
