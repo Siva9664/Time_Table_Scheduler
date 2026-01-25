@@ -34,6 +34,20 @@ def delete_batch(id: int, db: Session = Depends(get_db), current_user: User = De
     db.commit()
     return {"message": "Deleted"}
 
+@router.put("/batches/{id}", response_model=BatchResponse)
+def update_batch(id: int, batch: BatchUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    db_obj = db.query(Batch).filter(Batch.id == id).first()
+    if not db_obj:
+        raise HTTPException(status_code=404, detail="Not found")
+    
+    update_data = batch.dict(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_obj, key, value)
+    
+    db.commit()
+    db.refresh(db_obj)
+    return db_obj
+
 # Departments
 @router.post("/departments", response_model=DepartmentResponse)
 def create_department(dept: DepartmentCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -63,6 +77,20 @@ def delete_department(id: int, db: Session = Depends(get_db), current_user: User
         raise HTTPException(status_code=400, detail=str(e))
     return {"message": "Deleted"}
 
+@router.put("/departments/{id}", response_model=DepartmentResponse)
+def update_department(id: int, dept: DepartmentUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    db_obj = db.query(Department).filter(Department.id == id).first()
+    if not db_obj:
+        raise HTTPException(status_code=404, detail="Not found")
+    
+    update_data = dept.dict(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_obj, key, value)
+    
+    db.commit()
+    db.refresh(db_obj)
+    return db_obj
+
 # Classes
 @router.post("/classes", response_model=ClassResponse)
 def create_class(cls: ClassCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -87,6 +115,20 @@ def delete_class(id: int, db: Session = Depends(get_db), current_user: User = De
     db.delete(obj)
     db.commit()
     return {"message": "Deleted"}
+
+@router.put("/classes/{id}", response_model=ClassResponse)
+def update_class(id: int, cls: ClassUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    db_obj = db.query(Class).filter(Class.id == id).first()
+    if not db_obj:
+        raise HTTPException(status_code=404, detail="Not found")
+    
+    update_data = cls.dict(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_obj, key, value)
+    
+    db.commit()
+    db.refresh(db_obj)
+    return db_obj
 
 # Subjects
 @router.post("/subjects", response_model=SubjectResponse)
@@ -152,6 +194,20 @@ def delete_faculty(id: int, db: Session = Depends(get_db), current_user: User = 
     db.commit()
     return {"message": "Deleted"}
 
+@router.put("/faculty/{id}", response_model=FacultyResponse)
+def update_faculty(id: int, fac: FacultyUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    db_obj = db.query(Faculty).filter(Faculty.id == id).first()
+    if not db_obj:
+        raise HTTPException(status_code=404, detail="Not found")
+    
+    update_data = fac.dict(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_obj, key, value)
+    
+    db.commit()
+    db.refresh(db_obj)
+    return db_obj
+
 # Rooms
 @router.post("/rooms", response_model=RoomResponse)
 def create_room(room: RoomCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -173,6 +229,20 @@ def delete_room(id: int, db: Session = Depends(get_db), current_user: User = Dep
     db.delete(obj)
     db.commit()
     return {"message": "Deleted"}
+
+@router.put("/rooms/{id}", response_model=RoomResponse)
+def update_room(id: int, room: RoomUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    db_obj = db.query(Room).filter(Room.id == id).first()
+    if not db_obj:
+        raise HTTPException(status_code=404, detail="Not found")
+    
+    update_data = room.dict(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_obj, key, value)
+    
+    db.commit()
+    db.refresh(db_obj)
+    return db_obj
 
 # Timetable Generation
 @router.post("/generate", response_model=TimetableResponse)

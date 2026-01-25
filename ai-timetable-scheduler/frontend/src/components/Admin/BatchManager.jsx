@@ -3,10 +3,12 @@ import { useForm } from 'react-hook-form';
 import { batchAPI } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
 import ConfirmationModal from '../Layout/ConfirmationModal';
+import { Edit, Trash2, Plus } from 'lucide-react';
 
 export default function BatchManager() {
     const [batches, setBatches] = useState([]);
     const [showForm, setShowForm] = useState(false);
+    const [editData, setEditData] = useState(null);
     const { register, handleSubmit, reset, setValue } = useForm();
     const { showToast } = useToast();
 
@@ -26,6 +28,31 @@ export default function BatchManager() {
         }
     };
 
+    const handleEdit = (batch) => {
+        setEditData(batch);
+        setValue('name', batch.name);
+        setValue('period_duration', batch.period_duration);
+        setValue('start_time', batch.start_time);
+        setValue('end_time', batch.end_time);
+
+        if (batch.lunch_break) {
+            setValue('lunch_start', batch.lunch_break.start);
+            setValue('lunch_end', batch.lunch_break.end);
+        } else {
+            setValue('lunch_start', '');
+            setValue('lunch_end', '');
+        }
+
+        if (batch.break_times) {
+            const text = batch.break_times.map(b => `${b.start}-${b.end}`).join('\n');
+            setValue('breaks_text', text);
+        } else {
+            setValue('breaks_text', '');
+        }
+
+        setShowForm(true);
+    };
+
     const onSubmit = async (data) => {
         try {
             // Parse breaks from textarea (line separated HH:MM-HH:MM)
@@ -43,13 +70,20 @@ export default function BatchManager() {
                 lunch_break: data.lunch_start && data.lunch_end ? { start: data.lunch_start, end: data.lunch_end } : {}
             };
 
-            await batchAPI.create(payload);
+            if (editData) {
+                await batchAPI.update(editData.id, payload);
+                showToast("Batch updated successfully!", "success");
+            } else {
+                await batchAPI.create(payload);
+                showToast("Batch created successfully!", "success");
+            }
+
             reset();
+            setEditData(null);
             setShowForm(false);
             loadBatches();
-            showToast("Batch created successfully!", "success");
         } catch (error) {
-            showToast("Failed to create batch: " + error.message, "error");
+            showToast("Failed to save batch: " + error.message, "error");
         }
     };
 
@@ -79,13 +113,23 @@ export default function BatchManager() {
                 message="Are you sure you want to delete this batch configuration?"
             />
 
-            <div className="flex justify-between mb-6">
+            <div className="flex justify-between items-center mb-6">
                 <h1 className="text-3xl font-bold">Batch Configurations</h1>
-                <button onClick={() => setShowForm(!showForm)} className="btn btn-primary">{showForm ? 'Cancel' : '+ Add Batch'}</button>
+                <button
+                    onClick={() => {
+                        setEditData(null);
+                        reset();
+                        setShowForm(!showForm);
+                    }}
+                    className="btn btn-primary flex items-center gap-2"
+                >
+                    {showForm ? 'Cancel' : <><Plus size={20} /> Add Batch</>}
+                </button>
             </div>
 
             {showForm && (
                 <div className="card mb-6 bg-white p-6 rounded-lg shadow-sm border border-gray-100">
+                    <h2 className="text-xl font-bold mb-4">{editData ? 'Edit Batch Configuration' : 'Add New Batch Configuration'}</h2>
                     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div><label className="block text-sm font-medium mb-1">Batch Name *</label><input {...register('name', { required: true })} className="input w-full border rounded p-2" placeholder="e.g. 1st Year Main block" /></div>
@@ -107,7 +151,10 @@ export default function BatchManager() {
                             <textarea {...register('breaks_text')} className="input w-full border rounded p-2 h-24 font-mono text-sm" placeholder="10:30-10:45&#10;15:00-15:15"></textarea>
                         </div>
 
-                        <button type="submit" className="btn btn-primary w-full py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Create Configuration</button>
+                        <div className="flex justify-end gap-2">
+                            <button type="button" onClick={() => setShowForm(false)} className="btn btn-secondary">Cancel</button>
+                            <button type="submit" className="btn btn-primary py-2 bg-blue-600 text-white rounded hover:bg-blue-700">{editData ? 'Update Configuration' : 'Create Configuration'}</button>
+                        </div>
                     </form>
                 </div>
             )}
@@ -120,8 +167,20 @@ export default function BatchManager() {
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {batches.map(b => (
-                        <div key={b.id} className="card relative group">
-                            <button onClick={() => handleDeleteClick(b.id)} className="absolute top-2 right-2 text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">Delete</button>
+                        <div key={b.id} className="card relative group hover:shadow-lg transition-shadow">
+                            <div className="absolute top-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button
+                                    onClick={() => handleEdit(b)}
+                                    className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+                                    title="Edit Batch"
+                                >
+                                    <Edit size={18} />
+                                </button>
+                                <button onClick={() => handleDeleteClick(b.id)} className="p-1.5 text-red-600 hover:bg-red-50 rounded-full transition-colors" title="Delete Batch">
+                                    <Trash2 size={18} />
+                                </button>
+                            </div>
+
                             <h3 className="font-bold text-lg mb-2">{b.name}</h3>
                             <div className="text-sm text-gray-600 space-y-1">
                                 <p>🕒 {b.start_time} - {b.end_time}</p>

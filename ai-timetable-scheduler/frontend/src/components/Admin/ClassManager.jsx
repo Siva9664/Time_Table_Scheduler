@@ -3,13 +3,15 @@ import { useForm } from 'react-hook-form';
 import { classAPI, departmentAPI, batchAPI } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
 import ConfirmationModal from '../Layout/ConfirmationModal';
+import { Edit, Trash2, Plus } from 'lucide-react';
 
 export default function ClassManager() {
   const [classes, setClasses] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [batches, setBatches] = useState([]);
   const [showForm, setShowForm] = useState(false);
-  const { register, handleSubmit, reset } = useForm();
+  const [editData, setEditData] = useState(null);
+  const { register, handleSubmit, reset, setValue } = useForm();
   const { showToast } = useToast();
 
   // Modal State
@@ -34,21 +36,41 @@ export default function ClassManager() {
     }
   };
 
+  const handleEdit = (cls) => {
+    setEditData(cls);
+    setValue('name', cls.name);
+    setValue('section', cls.section);
+    setValue('department_id', cls.department_id);
+    setValue('batch_id', cls.batch_id);
+    setValue('semester', cls.semester);
+    setValue('student_count', cls.student_count);
+    setShowForm(true);
+  };
+
   const onSubmit = async (data) => {
     try {
-      await classAPI.create({
+      const payload = {
         ...data,
         department_id: parseInt(data.department_id),
         semester: parseInt(data.semester),
         student_count: parseInt(data.student_count),
         batch_id: data.batch_id ? parseInt(data.batch_id) : null
-      });
+      };
+
+      if (editData) {
+        await classAPI.update(editData.id, payload);
+        showToast('Class updated!', 'success');
+      } else {
+        await classAPI.create(payload);
+        showToast('Class created!', 'success');
+      }
+
       reset();
+      setEditData(null);
       setShowForm(false);
       loadData();
-      showToast('Class created!', 'success');
     } catch (error) {
-      showToast(error.response?.data?.detail || 'Failed to create class', 'error');
+      showToast(error.response?.data?.detail || 'Failed to save class', 'error');
     }
   };
 
@@ -83,12 +105,23 @@ export default function ClassManager() {
         message="Are you sure you want to delete this class? This action cannot be undone."
       />
 
-      <div className="flex justify-between mb-6">
+      <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">Classes</h1>
-        <button onClick={() => setShowForm(!showForm)} className="btn btn-primary">{showForm ? 'Cancel' : '+ Add Class'}</button>
+        <button
+          onClick={() => {
+            setEditData(null);
+            reset();
+            setShowForm(!showForm);
+          }}
+          className="btn btn-primary flex items-center gap-2"
+        >
+          {showForm ? 'Cancel' : <><Plus size={20} /> Add Class</>}
+        </button>
       </div>
+
       {showForm && (
         <div className="card mb-6">
+          <h2 className="text-xl font-bold mb-4">{editData ? 'Edit Class' : 'Add New Class'}</h2>
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
             <div><label className="block text-sm font-medium mb-2">Name *</label><input {...register('name', { required: true })} className="input" placeholder="B.Tech 2nd Year" /></div>
             <div><label className="block text-sm font-medium mb-2">Section</label><input {...register('section')} className="input" placeholder="A" /></div>
@@ -112,10 +145,14 @@ export default function ClassManager() {
               <div><label className="block text-sm font-medium mb-2">Semester</label><input {...register('semester')} type="number" className="input" /></div>
               <div><label className="block text-sm font-medium mb-2">Students</label><input {...register('student_count')} type="number" className="input" /></div>
             </div>
-            <button type="submit" className="btn btn-primary">Create</button>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setShowForm(false)} className="btn btn-secondary">Cancel</button>
+              <button type="submit" className="btn btn-primary">{editData ? 'Update' : 'Create'}</button>
+            </div>
           </form>
         </div>
       )}
+
       {classes.length === 0 ? (
         <div className="card text-center py-12">
           <p className="text-xl text-gray-600">There are no classes.</p>
@@ -124,14 +161,30 @@ export default function ClassManager() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {classes.map(cls => (
-            <div key={cls.id} className="card">
-              <div className="flex justify-between mb-2">
-                <h3 className="text-xl font-bold">{cls.name} {cls.section}</h3>
-                <button onClick={() => handleDeleteClick(cls.id)} className="text-red-600 hover:text-red-800 font-semibold">Delete</button>
+            <div key={cls.id} className="card relative group hover:shadow-lg transition-shadow">
+              <div className="absolute top-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button
+                  onClick={() => handleEdit(cls)}
+                  className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+                  title="Edit Class"
+                >
+                  <Edit size={18} />
+                </button>
+                <button
+                  onClick={() => handleDeleteClick(cls.id)}
+                  className="p-1.5 text-red-600 hover:bg-red-50 rounded-full transition-colors"
+                  title="Delete Class"
+                >
+                  <Trash2 size={18} />
+                </button>
               </div>
-              <p>Semester: {cls.semester}</p>
-              <p>Students: {cls.student_count}</p>
-              <p className="text-sm text-gray-500 mt-2">Batch: {getBatchName(cls.batch_id)}</p>
+
+              <h3 className="text-xl font-bold pr-16">{cls.name} {cls.section}</h3>
+              <div className="mt-2 space-y-1 text-sm text-gray-600">
+                <p>Semester: <span className="font-medium text-gray-800">{cls.semester}</span></p>
+                <p>Students: <span className="font-medium text-gray-800">{cls.student_count}</span></p>
+                <p>Batch: <span className="font-medium text-gray-800">{getBatchName(cls.batch_id)}</span></p>
+              </div>
             </div>
           ))}
         </div>

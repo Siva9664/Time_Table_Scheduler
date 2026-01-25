@@ -42,12 +42,14 @@ export const batchAPI = {
 export const departmentAPI = {
   getAll: () => api.get('/departments'),
   create: (data) => api.post('/departments', data),
+  update: (id, data) => api.put(`/departments/${id}`, data),
   delete: (id) => api.delete(`/departments/${id}`)
 };
 
 export const classAPI = {
   getAll: () => api.get('/classes'),
   create: (data) => api.post('/classes', data),
+  update: (id, data) => api.put(`/classes/${id}`, data),
   delete: (id) => api.delete(`/classes/${id}`)
 };
 
@@ -61,12 +63,14 @@ export const subjectAPI = {
 export const facultyAPI = {
   getAll: () => api.get('/faculty'),
   create: (data) => api.post('/faculty', data),
+  update: (id, data) => api.put(`/faculty/${id}`, data),
   delete: (id) => api.delete(`/faculty/${id}`)
 };
 
 export const roomAPI = {
   getAll: () => api.get('/rooms'),
   create: (data) => api.post('/rooms', data),
+  update: (id, data) => api.put(`/rooms/${id}`, data),
   delete: (id) => api.delete(`/rooms/${id}`)
 };
 

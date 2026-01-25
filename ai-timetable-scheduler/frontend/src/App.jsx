@@ -14,7 +14,6 @@ import TimetableView from './components/Timetable/TimetableView';
 import Settings from './components/Admin/Settings';
 import Sidebar from './components/Layout/Sidebar';
 import { isAuthenticated, removeToken } from './utils/auth';
-
 import { ToastProvider } from './context/ToastContext';
 
 function App() {
@@ -30,16 +29,20 @@ function App() {
     return isLoggedIn ? children : <Navigate to="/login" />;
   };
 
-  const MainLayout = () => (
-    <div className="flex min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
-      <Sidebar onLogout={handleLogout} />
-      <div className="flex-1 ml-64 p-8 overflow-y-auto h-screen">
-        <div className="max-w-6xl mx-auto">
-          <Outlet />
+  const MainLayout = () => {
+    const location = useLocation();
+
+    return (
+      <div className="flex h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
+        <Sidebar onLogout={handleLogout} />
+        <div className="flex-1 main-content p-8 overflow-y-auto h-full relative">
+          <div key={location.pathname} className="max-w-6xl mx-auto animate-page">
+            <Outlet />
+          </div>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
 
   return (

@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { subjectAPI, facultyAPI, classAPI, departmentAPI, batchAPI } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
+import { Edit, Trash2 } from 'lucide-react';
+import ConfirmationModal from '../Layout/ConfirmationModal';
 
 const FacultyMapping = () => {
     const [subjects, setSubjects] = useState([]);
@@ -20,6 +22,10 @@ const FacultyMapping = () => {
     const [saving, setSaving] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const { showToast } = useToast();
+
+    // Modal State
+    const [isUnassignModalOpen, setIsUnassignModalOpen] = useState(false);
+    const [subjectToUnassign, setSubjectToUnassign] = useState(null);
 
     useEffect(() => {
         loadData();
@@ -74,6 +80,37 @@ const FacultyMapping = () => {
             showToast('Failed to save mapping.', 'error');
         } finally {
             setSaving(false);
+        }
+    };
+
+    const handleEditClick = (sub) => {
+        // Pre-fill the form with this subject's details
+        const cls = classes.find(c => c.id === sub.class_id);
+        if (cls) {
+            setSelectedBatchId(cls.batch_id || '');
+            setSelectedDeptId(cls.department_id || '');
+            setSelectedClassId(cls.id);
+        }
+        setSelectedSubjectId(sub.id);
+        setSelectedFacultyId(sub.faculty_id || '');
+
+        // Scroll to top
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+
+    const handleUnassignClick = (id) => {
+        setSubjectToUnassign(id);
+        setIsUnassignModalOpen(true);
+    };
+
+    const confirmUnassign = async () => {
+        if (!subjectToUnassign) return;
+        try {
+            await subjectAPI.update(subjectToUnassign, { faculty_id: null });
+            loadData();
+            showToast('Faculty unassigned!', 'success');
+        } catch (error) {
+            showToast('Failed to unassign faculty.', 'error');
         }
     };
 
@@ -145,6 +182,14 @@ const FacultyMapping = () => {
 
     return (
         <div className="space-y-8">
+            <ConfirmationModal
+                isOpen={isUnassignModalOpen}
+                onClose={() => setIsUnassignModalOpen(false)}
+                onConfirm={confirmUnassign}
+                title="Unassign Faculty"
+                message="Are you sure you want to remove the assigned faculty from this subject?"
+            />
+
             <h1 className="text-3xl font-bold text-slate-800">Faculty Mapping</h1>
 
             {/* Top Section: Mapping Form */}
@@ -278,6 +323,7 @@ const FacultyMapping = () => {
                                 <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Subject</th>
                                 <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Type</th>
                                 <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Assigned Faculty</th>
+                                <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Actions</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -295,8 +341,8 @@ const FacultyMapping = () => {
                                     </td>
                                     <td className="px-6 py-4">
                                         <span className={`px-3 py-1 text-xs font-bold rounded-full ${sub.requires_lab
-                                                ? 'bg-purple-100 text-purple-600'
-                                                : 'bg-blue-100 text-blue-600'
+                                            ? 'bg-purple-100 text-purple-600'
+                                            : 'bg-blue-100 text-blue-600'
                                             }`}>
                                             {sub.requires_lab ? 'LAB' : 'THEORY'}
                                         </span>
@@ -311,11 +357,29 @@ const FacultyMapping = () => {
                                             <span className="text-sm text-slate-400 italic">Unassigned</span>
                                         )}
                                     </td>
+                                    <td className="px-6 py-4 flex gap-2">
+                                        <button
+                                            onClick={() => handleEditClick(sub)}
+                                            className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-full transition-colors"
+                                            title="Edit Assignment"
+                                        >
+                                            <Edit size={16} />
+                                        </button>
+                                        {sub.faculty_id && (
+                                            <button
+                                                onClick={() => handleUnassignClick(sub.id)}
+                                                className="p-1.5 text-red-500 hover:bg-red-50 rounded-full transition-colors"
+                                                title="Unassign Faculty"
+                                            >
+                                                <Trash2 size={16} />
+                                            </button>
+                                        )}
+                                    </td>
                                 </tr>
                             ))}
                             {filteredOverview.length === 0 && (
                                 <tr>
-                                    <td colSpan="5" className="px-6 py-8 text-center text-gray-500">
+                                    <td colSpan="6" className="px-6 py-8 text-center text-gray-500">
                                         No mappings found.
                                     </td>
                                 </tr>

@@ -3,12 +3,14 @@ import { useForm } from 'react-hook-form';
 import { departmentAPI } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
 import ConfirmationModal from '../Layout/ConfirmationModal';
+import { Edit, Trash2, Plus } from 'lucide-react';
 
 export default function DepartmentManager() {
   const [departments, setDepartments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const { register, handleSubmit, reset, formState: { errors } } = useForm();
+  const [editData, setEditData] = useState(null);
+  const { register, handleSubmit, reset, setValue, formState: { errors } } = useForm();
   const { showToast } = useToast();
 
   // Confirmation Modal State
@@ -31,15 +33,29 @@ export default function DepartmentManager() {
     }
   };
 
+  const handleEdit = (dept) => {
+    setEditData(dept);
+    setValue('name', dept.name);
+    setValue('code', dept.code);
+    setShowForm(true);
+  };
+
   const onSubmit = async (data) => {
     try {
-      await departmentAPI.create(data);
+      if (editData) {
+        await departmentAPI.update(editData.id, data);
+        showToast('Department updated!', 'success');
+      } else {
+        await departmentAPI.create(data);
+        showToast('Department created!', 'success');
+      }
+
       reset();
+      setEditData(null);
       setShowForm(false);
       loadDepartments();
-      showToast('Department created!', 'success');
     } catch (error) {
-      showToast(error.response?.data?.detail || 'Failed to create', 'error');
+      showToast(error.response?.data?.detail || 'Failed to save department', 'error');
     }
   };
 
@@ -71,14 +87,21 @@ export default function DepartmentManager() {
 
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">Departments</h1>
-        <button onClick={() => setShowForm(!showForm)} className="btn btn-primary">
-          {showForm ? 'Cancel' : '+ Add Department'}
+        <button
+          onClick={() => {
+            setEditData(null);
+            reset();
+            setShowForm(!showForm);
+          }}
+          className="btn btn-primary flex items-center gap-2"
+        >
+          {showForm ? 'Cancel' : <><Plus size={20} /> Add Department</>}
         </button>
       </div>
 
       {showForm && (
         <div className="card mb-6">
-          <h2 className="text-xl font-semibold mb-4">Add New Department</h2>
+          <h2 className="text-xl font-semibold mb-4">{editData ? 'Edit Department' : 'Add New Department'}</h2>
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
             <div>
               <label className="block text-sm font-medium mb-2">Name *</label>
@@ -90,7 +113,10 @@ export default function DepartmentManager() {
               <input {...register('code', { required: true })} className="input" placeholder="CSE" />
               {errors.code && <p className="text-red-500 text-sm">Code required</p>}
             </div>
-            <button type="submit" className="btn btn-primary">Create</button>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setShowForm(false)} className="btn btn-secondary">Cancel</button>
+              <button type="submit" className="btn btn-primary">{editData ? 'Update' : 'Create'}</button>
+            </div>
           </form>
         </div>
       )}
@@ -103,11 +129,25 @@ export default function DepartmentManager() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {departments.map((dept) => (
-            <div key={dept.id} className="card">
-              <div className="flex justify-between items-start mb-2">
-                <h3 className="text-xl font-bold">{dept.name}</h3>
-                <button onClick={() => handleDeleteClick(dept.id)} className="text-red-600 hover:text-red-800 font-semibold">Delete</button>
+            <div key={dept.id} className="card relative group hover:shadow-lg transition-shadow">
+              <div className="absolute top-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button
+                  onClick={() => handleEdit(dept)}
+                  className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+                  title="Edit Department"
+                >
+                  <Edit size={18} />
+                </button>
+                <button
+                  onClick={() => handleDeleteClick(dept.id)}
+                  className="p-1.5 text-red-600 hover:bg-red-50 rounded-full transition-colors"
+                  title="Delete Department"
+                >
+                  <Trash2 size={18} />
+                </button>
               </div>
+
+              <h3 className="text-xl font-bold">{dept.name}</h3>
               <p>Code: <span className="font-semibold">{dept.code}</span></p>
               <p className="text-sm text-gray-500 mt-2">Created: {new Date(dept.created_at).toLocaleDateString()}</p>
             </div>

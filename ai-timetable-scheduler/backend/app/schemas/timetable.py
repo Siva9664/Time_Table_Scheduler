@@ -9,6 +9,10 @@ class DepartmentBase(BaseModel):
 class DepartmentCreate(DepartmentBase):
     pass
 
+class DepartmentUpdate(BaseModel):
+    name: Optional[str] = None
+    code: Optional[str] = None
+
 class DepartmentResponse(DepartmentBase):
     id: int
     created_at: datetime
@@ -26,6 +30,14 @@ class BatchBase(BaseModel):
 class BatchCreate(BatchBase):
     pass
 
+class BatchUpdate(BaseModel):
+    name: Optional[str] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    period_duration: Optional[int] = None
+    break_times: Optional[List[Dict[str, str]]] = None 
+    lunch_break: Optional[Dict[str, str]] = None 
+
 class BatchResponse(BatchBase):
     id: int
     created_at: datetime
@@ -42,6 +54,14 @@ class ClassBase(BaseModel):
 
 class ClassCreate(ClassBase):
     pass
+
+class ClassUpdate(BaseModel):
+    name: Optional[str] = None
+    section: Optional[str] = None
+    semester: Optional[int] = None
+    student_count: Optional[int] = None
+    department_id: Optional[int] = None
+    batch_id: Optional[int] = None
 
 class ClassResponse(ClassBase):
     id: int
@@ -93,6 +113,13 @@ class FacultyBase(BaseModel):
 class FacultyCreate(FacultyBase):
     pass
 
+class FacultyUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[EmailStr] = None
+    department_id: Optional[int] = None
+    max_hours_per_week: Optional[int] = None
+    unavailable_slots: Optional[List[Dict[str, Any]]] = None
+
 class FacultyResponse(FacultyBase):
     id: int
     created_at: datetime
@@ -108,6 +135,13 @@ class RoomBase(BaseModel):
 
 class RoomCreate(RoomBase):
     pass
+
+class RoomUpdate(BaseModel):
+    name: Optional[str] = None
+    room_type: Optional[str] = None
+    capacity: Optional[int] = None
+    has_projector: Optional[bool] = None
+    has_computers: Optional[bool] = None
 
 class RoomResponse(RoomBase):
     id: int
