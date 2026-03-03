@@ -6,7 +6,7 @@ echo ==========================================
 echo.
 echo [1/3] Setting up virtual environment...
 if exist "Z:\" subst Z: /d
-subst Z: "%~dp0ai-timetable-scheduler\backend"
+subst Z: "%~dp0backend"
 
 echo.
 echo [1.5/3] Checking Dependencies...
@@ -18,7 +18,7 @@ start "AI Timetable Backend" cmd /k "set PYTHONPATH=Z:\pkg && Z:\venv_short\Scri
 
 echo.
 echo [3/3] Starting Frontend Server...
-cd "ai-timetable-scheduler\frontend"
+cd "frontend"
 start "AI Timetable Frontend" cmd /k "npm run dev"
 
 echo.

@@ -1,22 +1,29 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-venv/
-.venv/
-venv_short/
-pkg/
-env/
-.env
-*.db
-sql_app.db
 
+*$py.class
+build/
+*.db
+dist/
+.DS_Store
+.env
+env/
+.eslintcache
+frontend/node_modules/
+.gemini/
+.idea/
+*.local
+*.log
 # Node
 node_modules/
-frontend/node_modules/
-dist/
-.eslintcache
-
+pkg/
+*.pyc
+__pycache__/
+*.py[cod]
+# Python
+sql_app.db
+*.sqlite3
+Thumbs.db
 # Tool generated
-.gemini/
-*.log
+.venv/
+venv/
+venv_short/
+.vscode/

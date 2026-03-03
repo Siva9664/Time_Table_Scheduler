@@ -51,7 +51,7 @@ try {
 
 Write-Host ""
 Write-Host "[2/6] Setting up Backend..." -ForegroundColor Cyan
-Set-Location "ai-timetable-scheduler\backend"
+Set-Location "backend"
 
 # Remove old venv
 if (Test-Path "venv") {
@@ -100,29 +100,29 @@ foreach ($package in $packages) {
 }
 
 Write-Host "✓ Backend setup complete!" -ForegroundColor Green
-Set-Location "..\..\"
+Set-Location ".."
 
 Write-Host ""
 Write-Host "[3/6] Setting up Frontend..." -ForegroundColor Cyan
-Set-Location "ai-timetable-scheduler\frontend"
+Set-Location "frontend"
 
 Write-Host "Installing Node.js dependencies..." -ForegroundColor Yellow
 npm install
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Failed to install Node.js dependencies" -ForegroundColor Red
-    Set-Location "..\..\"
+    Set-Location ".."
     exit 1
 }
 
 Write-Host "✓ Frontend setup complete!" -ForegroundColor Green
-Set-Location "..\..\"
+Set-Location ".."
 
 Write-Host ""
 Write-Host "[4/6] Initializing Database..." -ForegroundColor Cyan
-Set-Location "ai-timetable-scheduler\backend"
+Set-Location "backend"
 & "venv\Scripts\Activate.ps1"
 python init_db.py
-Set-Location "..\..\"
+Set-Location ".."
 
 Write-Host ""
 Write-Host "[5/6] Setup Complete!" -ForegroundColor Green
@@ -135,14 +135,14 @@ Write-Host ""
 
 # Start backend
 Write-Host "[6/6] Starting Backend Server..." -ForegroundColor Cyan
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd 'ai-timetable-scheduler\backend'; .\venv\Scripts\Activate.ps1; python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd 'backend'; .\venv\Scripts\Activate.ps1; python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
 
 # Wait for backend
 Start-Sleep -Seconds 3
 
 # Start frontend
 Write-Host "Starting Frontend Server..." -ForegroundColor Cyan
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd 'ai-timetable-scheduler\frontend'; npm run dev"
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd 'frontend'; npm run dev"
 
 Write-Host ""
 Write-Host "==========================================" -ForegroundColor Green

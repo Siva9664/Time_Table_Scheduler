@@ -109,7 +109,7 @@ try {
 
 Write-Host ""
 Write-Host "[3/7] Setting up Backend..." -ForegroundColor Cyan
-Set-Location "ai-timetable-scheduler\backend"
+Set-Location "backend"
 
 # Remove old venv
 if (Test-Path "venv") {
@@ -122,7 +122,7 @@ Write-Host "Creating virtual environment..." -ForegroundColor Yellow
 python -m venv venv
 if ($LASTEXITCODE -ne 0) {
     Write-Host "✗ Failed to create virtual environment" -ForegroundColor Red
-    Set-Location "..\..\"
+    Set-Location ".."
     pause
     exit 1
 }
@@ -195,11 +195,11 @@ foreach ($pkg in $packages) {
 
 Write-Host ""
 Write-Host "✓ Backend dependencies installed!" -ForegroundColor Green
-Set-Location "..\..\"
+Set-Location ".."
 
 Write-Host ""
 Write-Host "[4/7] Setting up Frontend..." -ForegroundColor Cyan
-Set-Location "ai-timetable-scheduler\frontend"
+Set-Location "frontend"
 
 Write-Host "Installing Node.js dependencies..." -ForegroundColor Yellow
 npm install 2>&1 | Out-Null
@@ -210,11 +210,11 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "⚠ Frontend installation had issues" -ForegroundColor Yellow
 }
 
-Set-Location "..\..\"
+Set-Location ".."
 
 Write-Host ""
 Write-Host "[5/7] Initializing Database Schema..." -ForegroundColor Cyan
-Set-Location "ai-timetable-scheduler\backend"
+Set-Location "backend"
 & "venv\Scripts\Activate.ps1"
 
 Write-Host "Creating database tables and initial data..." -ForegroundColor Yellow
@@ -226,13 +226,13 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "⚠ Database initialization had issues" -ForegroundColor Yellow
 }
 
-Set-Location "..\..\"
+Set-Location ".."
 
 Write-Host ""
 Write-Host "[6/7] Verifying Installation..." -ForegroundColor Cyan
 
 # Test imports
-Set-Location "ai-timetable-scheduler\backend"
+Set-Location "backend"
 & "venv\Scripts\Activate.ps1"
 
 $testScript = @"
@@ -249,7 +249,7 @@ except ImportError as e:
 
 $testScript | python 2>&1
 
-Set-Location "..\..\"
+Set-Location ".."
 
 Write-Host ""
 Write-Host "[7/7] Setup Complete!" -ForegroundColor Green
@@ -262,14 +262,14 @@ Write-Host ""
 
 # Start backend
 Write-Host "Starting Backend Server..." -ForegroundColor Cyan
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd 'ai-timetable-scheduler\backend'; .\venv\Scripts\Activate.ps1; python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd 'backend'; .\venv\Scripts\Activate.ps1; python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
 
 # Wait for backend
 Start-Sleep -Seconds 5
 
 # Start frontend
 Write-Host "Starting Frontend Server..." -ForegroundColor Cyan
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd 'ai-timetable-scheduler\frontend'; npm run dev"
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd 'frontend'; npm run dev"
 
 Write-Host ""
 Write-Host "==========================================" -ForegroundColor Green

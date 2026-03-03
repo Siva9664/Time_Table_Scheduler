@@ -23,7 +23,7 @@ if %errorlevel% neq 0 (
 )
 
 echo [1/5] Setting up Backend...
-cd ai-timetable-scheduler\backend
+cd backend
 
 REM Remove old venv if exists
 if exist venv (
@@ -65,11 +65,11 @@ if %errorlevel% neq 0 (
 )
 
 echo Backend setup complete!
-cd ..\..
+cd ..
 
 echo.
 echo [2/5] Setting up Frontend...
-cd ai-timetable-scheduler\frontend
+cd frontend
 
 REM Install Node dependencies
 echo Installing Node.js dependencies (this may take a few minutes)...
@@ -81,14 +81,14 @@ if %errorlevel% neq 0 (
 )
 
 echo Frontend setup complete!
-cd ..\..
+cd ..
 
 echo.
 echo [3/5] Initializing Database...
-cd ai-timetable-scheduler\backend
+cd backend
 call venv\Scripts\activate.bat
 python init_db.py
-cd ..\..
+cd ..
 
 echo.
 echo [4/5] Setup Complete!
@@ -100,14 +100,14 @@ echo.
 
 REM Start backend in new window
 echo [5/5] Starting Backend Server...
-start "AI Timetable Backend" cmd /k "cd ai-timetable-scheduler\backend && venv\Scripts\activate.bat && python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
+start "AI Timetable Backend" cmd /k "cd backend && venv\Scripts\activate.bat && python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"
 
 REM Wait a bit for backend to start
 timeout /t 3 /nobreak >nul
 
 REM Start frontend in new window
 echo Starting Frontend Server...
-start "AI Timetable Frontend" cmd /k "cd ai-timetable-scheduler\frontend && npm run dev"
+start "AI Timetable Frontend" cmd /k "cd frontend && npm run dev"
 
 echo.
 echo ==========================================
