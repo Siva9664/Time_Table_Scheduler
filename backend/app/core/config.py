@@ -4,9 +4,8 @@ from typing import List
 import os
 
 class Settings(BaseSettings):
-    # Go up 3 levels from app/core/config.py to reach backend root
-    BASE_DIR: str = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    DATABASE_URL: str = f"sqlite:///{os.path.join(BASE_DIR, 'sql_app.db')}"
+    MONGODB_URL: str = "mongodb://localhost:27017"
+    DB_NAME: str = "timetable_db"
     SECRET_KEY: str = "supersecretkey123"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 4320 # 3 days

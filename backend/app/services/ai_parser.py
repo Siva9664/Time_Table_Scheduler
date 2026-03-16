@@ -1,4 +1,8 @@
-import google.generativeai as genai
+try:
+    import google.generativeai as genai
+    GENAI_AVAILABLE = True
+except ImportError:
+    GENAI_AVAILABLE = False
 import json
 from typing import List, Dict, Any, Optional
 
@@ -6,10 +10,17 @@ class AIConstraintParser:
     def __init__(self, api_key: str):
         if not api_key:
             raise ValueError("API Key is required for AI features")
+        if not GENAI_AVAILABLE:
+            print("WARNING: google-generativeai is not installed. AI features disabled.")
+            self.model = None
+            return
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel('gemini-pro')
 
     def parse_constraints(self, text: str) -> List[Dict[str, Any]]:
+        if not GENAI_AVAILABLE or not getattr(self, 'model', None):
+            print("AI parsing disabled - missing google-generativeai")
+            return []
         """
         Parses natural language text into structured JSON constraints.
         Expected Output Format:

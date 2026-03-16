@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .api.router import api_router
 from .core.config import settings
 from .core.logging_config import configure_logging
-from .database.database import engine, Base
+from .database.database import get_client, close_mongo_connection
 import time
 import logging
 
@@ -11,8 +11,6 @@ import logging
 configure_logging()
 
 logger = logging.getLogger(__name__)
-
-Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="AI Timetable Scheduler", description="Dynamic timetable scheduling using OR-Tools", version="1.0.0")
 
@@ -30,10 +28,17 @@ async def log_requests(request: Request, call_next):
 @app.on_event("startup")
 async def startup_event():
     logger.info("Application starting up...")
+    try:
+        client = get_client()
+        client.admin.command("ping")
+        logger.info(f"✅ Connected to MongoDB at {settings.MONGODB_URL} | DB: {settings.DB_NAME}")
+    except Exception as e:
+        logger.error(f"❌ Could not connect to MongoDB: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     logger.info("Application shutting down...")
+    close_mongo_connection()
 
 app.include_router(api_router, prefix="/api")
 

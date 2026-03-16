@@ -1,23 +1,27 @@
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from pymongo import MongoClient
+from pymongo.database import Database
 from ..core.config import settings
 
-connect_args = {}
-if "sqlite" in settings.DATABASE_URL:
-    connect_args = {"check_same_thread": False}
+# Module-level client — created once at import time
+_client: MongoClient = None
 
-connect_args = {}
-if "sqlite" in settings.DATABASE_URL:
-    connect_args = {"check_same_thread": False}
+def get_client() -> MongoClient:
+    global _client
+    if _client is None:
+        _client = MongoClient(settings.MONGODB_URL)
+    return _client
 
-engine = create_engine(settings.DATABASE_URL, connect_args=connect_args)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
-
-def get_db():
-    db = SessionLocal()
+def get_db() -> Database:
+    """FastAPI dependency that yields the MongoDB database object."""
+    client = get_client()
+    db = client[settings.DB_NAME]
     try:
         yield db
     finally:
-        db.close()
+        pass  # PyMongo connections are pooled; no per-request close needed
+
+def close_mongo_connection():
+    global _client
+    if _client is not None:
+        _client.close()
+        _client = None
