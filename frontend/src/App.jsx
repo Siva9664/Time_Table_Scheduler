@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Link, useLocation, Outlet } from 'react-router-dom';
-import Login from './components/Auth/Login';
 import Dashboard from './components/Admin/Dashboard';
 import DepartmentManager from './components/Admin/DepartmentManager';
 import ClassManager from './components/Admin/ClassManager';
@@ -14,19 +13,22 @@ import TimetableView from './components/Timetable/TimetableView';
 import Settings from './components/Admin/Settings';
 import Sidebar from './components/Layout/Sidebar';
 import { isAuthenticated, removeToken } from './utils/auth';
+import Login from './components/Auth/Login';
 import { ToastProvider } from './context/ToastContext';
 
 function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(isAuthenticated());
 
-  const handleLogin = () => setIsLoggedIn(true);
   const handleLogout = () => {
     removeToken();
     setIsLoggedIn(false);
   };
 
   const ProtectedRoute = ({ children }) => {
-    return isLoggedIn ? children : <Navigate to="/login" />;
+    if (!isLoggedIn) {
+      return <Navigate to="/login" replace />;
+    }
+    return children;
   };
 
   const MainLayout = () => {
@@ -49,8 +51,6 @@ function App() {
     <ToastProvider>
       <Router>
         <Routes>
-          <Route path="/login" element={isLoggedIn ? <Navigate to="/" /> : <Login onLogin={handleLogin} />} />
-
           <Route path="/" element={<ProtectedRoute><MainLayout /></ProtectedRoute>}>
             <Route index element={<Dashboard />} />
             <Route path="departments" element={<DepartmentManager />} />
@@ -64,6 +64,7 @@ function App() {
             <Route path="view" element={<TimetableView />} />
             <Route path="settings" element={<Settings />} />
           </Route>
+          <Route path="/login" element={<Login onLogin={() => setIsLoggedIn(true)} />} />
         </Routes>
       </Router>
     </ToastProvider>

@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -26,7 +26,7 @@ api.interceptors.response.use(
 );
 
 export const authAPI = {
-  login: (username, password) => api.post('/auth/login', new URLSearchParams({ username, password })),
+  login: (email, password) => api.post('/auth/login', new URLSearchParams({ username: email, password })),
   register: (data) => api.post('/auth/register', data),
   getCurrentUser: () => api.get('/auth/me'),
   changePassword: (data) => api.post('/auth/change-password', data),
@@ -76,7 +76,7 @@ export const roomAPI = {
 
 export const timetableAPI = {
   generate: (data) => api.post('/generate', data),
-  getAll: () => api.get('/timetables/'),
+  getAll: () => api.get('/timetables'),
   getById: (id) => api.get(`/timetables/${id}`),
   delete: (id) => api.delete(`/timetables/${id}`)
 };

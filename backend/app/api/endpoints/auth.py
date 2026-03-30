@@ -8,7 +8,7 @@ from ...schemas.user import UserCreate, UserResponse, Token, UserChangePassword
 from ...core.security import verify_password, get_password_hash, create_access_token, get_current_user
 from ...core.config import settings
 
-router = APIRouter()
+router = APIRouter(redirect_slashes=False)
 
 @router.post("/register", response_model=UserResponse)
 def register(user: UserCreate, db: Database = Depends(get_db)):
@@ -32,14 +32,15 @@ def register(user: UserCreate, db: Database = Depends(get_db)):
 
 @router.post("/login", response_model=Token)
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Database = Depends(get_db)):
-    user = db["users"].find_one({"username": form_data.username})
+    # Check by email or username
+    user = db["users"].find_one({"$or": [{"email": form_data.username}, {"username": form_data.username}]})
     if not user or not verify_password(form_data.password, user["hashed_password"]):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect username or password",
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email/username or password",
                             headers={"WWW-Authenticate": "Bearer"})
     if not user.get("is_active", True):
         raise HTTPException(status_code=400, detail="Inactive user")
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(data={"sub": user["username"]}, expires_delta=access_token_expires)
+    access_token = create_access_token(data={"sub": user.get("email") or user["username"]}, expires_delta=access_token_expires)
     return {"access_token": access_token, "token_type": "bearer"}
 
 @router.get("/me", response_model=UserResponse)

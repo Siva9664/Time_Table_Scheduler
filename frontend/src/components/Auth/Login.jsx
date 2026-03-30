@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { authAPI } from '../../services/api';
-import { setToken } from '../../utils/auth';
+import { setToken, setUser } from '../../utils/auth';
 
 export default function Login({ onLogin }) {
   const { register, handleSubmit, formState: { errors } } = useForm();
@@ -12,8 +12,13 @@ export default function Login({ onLogin }) {
     setLoading(true);
     setError('');
     try {
-      const response = await authAPI.login(data.username, data.password);
+      const response = await authAPI.login(data.email, data.password);
       setToken(response.data.access_token);
+      
+      // Fetch current user info
+      const userResponse = await authAPI.getCurrentUser();
+      setUser(userResponse.data);
+      
       onLogin();
     } catch (err) {
       setError(err.response?.data?.detail || 'Login failed');
@@ -31,9 +36,9 @@ export default function Login({ onLogin }) {
         </div>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Username</label>
-            <input {...register('username', { required: 'Username is required' })} type="text" className="input" placeholder="Enter username" />
-            {errors.username && <p className="text-red-500 text-sm mt-1">{errors.username.message}</p>}
+            <label className="block text-sm font-medium text-gray-700 mb-2">Email</label>
+            <input {...register('email', { required: 'Email is required' })} type="email" className="input" placeholder="Enter your email" />
+            {errors.email && <p className="text-red-500 text-sm mt-1">{errors.email.message}</p>}
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Password</label>
@@ -45,10 +50,6 @@ export default function Login({ onLogin }) {
             {loading ? 'Signing in...' : 'Sign In'}
           </button>
         </form>
-        <div className="mt-6 text-center text-sm text-gray-600">
-          <p>Default: admin / admin123</p>
-          <p className="text-red-500 mt-1">Change password after first login!</p>
-        </div>
       </div>
     </div>
   );

@@ -9,12 +9,12 @@ from ...models.timetable import (
     subject_helper, faculty_helper, room_helper, timetable_helper
 )
 from ...schemas.timetable import *
-from ...core.security import get_current_user
+from ...core.security import get_current_user, get_admin_user
 from ...services.scheduler import TimetableScheduler
 from ...services.ai_parser import AIConstraintParser
 from ...core.config import settings
 
-router = APIRouter()
+router = APIRouter(redirect_slashes=False)
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -27,7 +27,7 @@ def _oid(id_str: str) -> ObjectId:
 # ── Batches ───────────────────────────────────────────────────────────────────
 
 @router.post("/batches", response_model=BatchResponse)
-def create_batch(batch: BatchCreate, db: Database = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def create_batch(batch: BatchCreate, db: Database = Depends(get_db), current_user: dict = Depends(get_admin_user)):
     doc = {**batch.dict(), "created_at": datetime.utcnow()}
     result = db["batches"].insert_one(doc)
     return batch_helper(db["batches"].find_one({"_id": result.inserted_id}))
@@ -37,14 +37,14 @@ def list_batches(db: Database = Depends(get_db), current_user: dict = Depends(ge
     return [batch_helper(d) for d in db["batches"].find()]
 
 @router.delete("/batches/{id}")
-def delete_batch(id: str, db: Database = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def delete_batch(id: str, db: Database = Depends(get_db), current_user: dict = Depends(get_admin_user)):
     result = db["batches"].delete_one({"_id": _oid(id)})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
     return {"message": "Deleted"}
 
 @router.put("/batches/{id}", response_model=BatchResponse)
-def update_batch(id: str, batch: BatchUpdate, db: Database = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def update_batch(id: str, batch: BatchUpdate, db: Database = Depends(get_db), current_user: dict = Depends(get_admin_user)):
     update_data = {k: v for k, v in batch.dict(exclude_unset=True).items()}
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -56,7 +56,7 @@ def update_batch(id: str, batch: BatchUpdate, db: Database = Depends(get_db), cu
 # ── Departments ───────────────────────────────────────────────────────────────
 
 @router.post("/departments", response_model=DepartmentResponse)
-def create_department(dept: DepartmentCreate, db: Database = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def create_department(dept: DepartmentCreate, db: Database = Depends(get_db), current_user: dict = Depends(get_admin_user)):
     doc = {**dept.dict(), "created_at": datetime.utcnow()}
     result = db["departments"].insert_one(doc)
     return department_helper(db["departments"].find_one({"_id": result.inserted_id}))
@@ -66,7 +66,7 @@ def list_departments(db: Database = Depends(get_db), current_user: dict = Depend
     return [department_helper(d) for d in db["departments"].find()]
 
 @router.delete("/departments/{id}")
-def delete_department(id: str, db: Database = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def delete_department(id: str, db: Database = Depends(get_db), current_user: dict = Depends(get_admin_user)):
     # Check if any classes or faculty reference this department
     if db["classes"].find_one({"department_id": id}) or db["faculty"].find_one({"department_id": id}):
         raise HTTPException(status_code=400, detail="Cannot delete Department: It has associated Faculty or Classes. Please delete them first.")
@@ -76,7 +76,7 @@ def delete_department(id: str, db: Database = Depends(get_db), current_user: dic
     return {"message": "Deleted"}
 
 @router.put("/departments/{id}", response_model=DepartmentResponse)
-def update_department(id: str, dept: DepartmentUpdate, db: Database = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def update_department(id: str, dept: DepartmentUpdate, db: Database = Depends(get_db), current_user: dict = Depends(get_admin_user)):
     update_data = {k: v for k, v in dept.dict(exclude_unset=True).items()}
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -95,7 +95,7 @@ def _enrich_class(doc: dict, db: Database) -> dict:
                         batch=batch_helper(batch) if batch else None)
 
 @router.post("/classes", response_model=ClassResponse)
-def create_class(cls: ClassCreate, db: Database = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def create_class(cls: ClassCreate, db: Database = Depends(get_db), current_user: dict = Depends(get_admin_user)):
     doc = {**cls.dict(), "created_at": datetime.utcnow()}
     result = db["classes"].insert_one(doc)
     return _enrich_class(db["classes"].find_one({"_id": result.inserted_id}), db)
@@ -106,14 +106,14 @@ def list_classes(department_id: Optional[str] = None, db: Database = Depends(get
     return [_enrich_class(d, db) for d in db["classes"].find(query)]
 
 @router.delete("/classes/{id}")
-def delete_class(id: str, db: Database = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def delete_class(id: str, db: Database = Depends(get_db), current_user: dict = Depends(get_admin_user)):
     result = db["classes"].delete_one({"_id": _oid(id)})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
     return {"message": "Deleted"}
 
 @router.put("/classes/{id}", response_model=ClassResponse)
-def update_class(id: str, cls: ClassUpdate, db: Database = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def update_class(id: str, cls: ClassUpdate, db: Database = Depends(get_db), current_user: dict = Depends(get_admin_user)):
     update_data = {k: v for k, v in cls.dict(exclude_unset=True).items()}
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -129,7 +129,7 @@ def _enrich_subject(doc: dict, db: Database) -> dict:
     return subject_helper(doc, assigned_class=_enrich_class(cls_doc, db) if cls_doc else None)
 
 @router.post("/subjects", response_model=SubjectResponse)
-def create_subject(subj: SubjectCreate, db: Database = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def create_subject(subj: SubjectCreate, db: Database = Depends(get_db), current_user: dict = Depends(get_admin_user)):
     doc = {**subj.dict(), "created_at": datetime.utcnow()}
     result = db["subjects"].insert_one(doc)
     return _enrich_subject(db["subjects"].find_one({"_id": result.inserted_id}), db)
@@ -140,7 +140,7 @@ def list_subjects(class_id: Optional[str] = None, db: Database = Depends(get_db)
     return [_enrich_subject(d, db) for d in db["subjects"].find(query)]
 
 @router.put("/subjects/{id}", response_model=SubjectResponse)
-def update_subject(id: str, subj: SubjectUpdate, db: Database = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def update_subject(id: str, subj: SubjectUpdate, db: Database = Depends(get_db), current_user: dict = Depends(get_admin_user)):
     update_data = {k: v for k, v in subj.dict(exclude_unset=True).items()}
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -150,7 +150,7 @@ def update_subject(id: str, subj: SubjectUpdate, db: Database = Depends(get_db),
     return _enrich_subject(db["subjects"].find_one({"_id": _oid(id)}), db)
 
 @router.delete("/subjects/{id}")
-def delete_subject(id: str, db: Database = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def delete_subject(id: str, db: Database = Depends(get_db), current_user: dict = Depends(get_admin_user)):
     result = db["subjects"].delete_one({"_id": _oid(id)})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
@@ -159,7 +159,7 @@ def delete_subject(id: str, db: Database = Depends(get_db), current_user: dict =
 # ── Faculty ───────────────────────────────────────────────────────────────────
 
 @router.post("/faculty", response_model=FacultyResponse)
-def create_faculty(fac: FacultyCreate, db: Database = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def create_faculty(fac: FacultyCreate, db: Database = Depends(get_db), current_user: dict = Depends(get_admin_user)):
     doc = {**fac.dict(), "created_at": datetime.utcnow()}
     result = db["faculty"].insert_one(doc)
     return faculty_helper(db["faculty"].find_one({"_id": result.inserted_id}))
@@ -170,14 +170,14 @@ def list_faculty(department_id: Optional[str] = None, db: Database = Depends(get
     return [faculty_helper(d) for d in db["faculty"].find(query)]
 
 @router.delete("/faculty/{id}")
-def delete_faculty(id: str, db: Database = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def delete_faculty(id: str, db: Database = Depends(get_db), current_user: dict = Depends(get_admin_user)):
     result = db["faculty"].delete_one({"_id": _oid(id)})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
     return {"message": "Deleted"}
 
 @router.put("/faculty/{id}", response_model=FacultyResponse)
-def update_faculty(id: str, fac: FacultyUpdate, db: Database = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def update_faculty(id: str, fac: FacultyUpdate, db: Database = Depends(get_db), current_user: dict = Depends(get_admin_user)):
     update_data = {k: v for k, v in fac.dict(exclude_unset=True).items()}
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -189,7 +189,7 @@ def update_faculty(id: str, fac: FacultyUpdate, db: Database = Depends(get_db), 
 # ── Rooms ─────────────────────────────────────────────────────────────────────
 
 @router.post("/rooms", response_model=RoomResponse)
-def create_room(room: RoomCreate, db: Database = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def create_room(room: RoomCreate, db: Database = Depends(get_db), current_user: dict = Depends(get_admin_user)):
     doc = {**room.dict(), "created_at": datetime.utcnow()}
     result = db["rooms"].insert_one(doc)
     return room_helper(db["rooms"].find_one({"_id": result.inserted_id}))
@@ -199,14 +199,14 @@ def list_rooms(db: Database = Depends(get_db), current_user: dict = Depends(get_
     return [room_helper(d) for d in db["rooms"].find()]
 
 @router.delete("/rooms/{id}")
-def delete_room(id: str, db: Database = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def delete_room(id: str, db: Database = Depends(get_db), current_user: dict = Depends(get_admin_user)):
     result = db["rooms"].delete_one({"_id": _oid(id)})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
     return {"message": "Deleted"}
 
 @router.put("/rooms/{id}", response_model=RoomResponse)
-def update_room(id: str, room: RoomUpdate, db: Database = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def update_room(id: str, room: RoomUpdate, db: Database = Depends(get_db), current_user: dict = Depends(get_admin_user)):
     update_data = {k: v for k, v in room.dict(exclude_unset=True).items()}
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -218,7 +218,7 @@ def update_room(id: str, room: RoomUpdate, db: Database = Depends(get_db), curre
 # ── Timetable Generation ──────────────────────────────────────────────────────
 
 @router.post("/generate", response_model=TimetableResponse)
-def generate_timetable(request: TimetableGenerateRequest, db: Database = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def generate_timetable(request: TimetableGenerateRequest, db: Database = Depends(get_db), current_user: dict = Depends(get_admin_user)):
     custom_constraints = []
     if request.constraints_text and settings.GEMINI_API_KEY:
         try:
