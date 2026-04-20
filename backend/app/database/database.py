@@ -17,48 +17,44 @@ def get_client() -> MongoClient:
     if _client is not None:
         return _client
     
-    # Try MongoDB Atlas first
+    # Try MongoDB Atlas
     try:
         conn_args = {
-            "serverSelectionTimeoutMS": 5000,
+            "serverSelectionTimeoutMS": 10000,
             "connectTimeoutMS": 10000,
+            "socketTimeoutMS": 10000,
             "retryWrites": True,
             "maxPoolSize": 10
         }
         
-        # Check if we should allow invalid certificates (common in some restricted environments)
+        # Connect to Atlas
         _client = MongoClient(settings.MONGODB_URL, **conn_args)
         _client.admin.command('ping')
         _connection_ready = True
-        logger.info("✅ Connected to MongoDB Atlas")
+        logger.info("✅ Successfully connected to MongoDB Atlas!")
         return _client
     except Exception as e:
-        logger.warning(f"⚠️ Primary connection failed: {str(e)[:100]}")
+        logger.warning(f"⚠️ Primary Atlas connection failed: {str(e)[:200]}")
         try:
-            # Try with SSL verification disabled as fallback
-            logger.info("Retrying with SSL verification disabled...")
+            # Try once more with SSL verification disabled
+            logger.info("Retrying Atlas with SSL verification disabled...")
             _client = MongoClient(settings.MONGODB_URL, tlsAllowInvalidCertificates=True, **conn_args)
             _client.admin.command('ping')
             _connection_ready = True
-            logger.info("✅ Connected to MongoDB Atlas (SSL verification disabled)")
+            logger.info("✅ Connected to MongoDB Atlas (SSL Safety Disabled)")
             return _client
         except Exception as e2:
-            logger.warning(f"⚠️ MongoDB Atlas unavailable: {str(e2)[:100]}")
+            logger.error(f"❌ Failed to reach Atlas: {str(e2)[:200]}")
         
         # Fallback to local MongoDB
         try:
-            _client = MongoClient(
-                "mongodb://localhost:27017",
-                serverSelectionTimeoutMS=3000,
-                connectTimeoutMS=5000
-            )
+            _client = MongoClient("mongodb://localhost:27017", serverSelectionTimeoutMS=3000)
             _client.admin.command('ping')
             _connection_ready = True
             logger.info("✅ Connected to Local MongoDB")
             return _client
-        except Exception as e2:
-            logger.error(f"❌ All MongoDB connections failed: {str(e2)[:100]}")
-            # Return client anyway - will fail on actual queries
+        except Exception as e3:
+            logger.error(f"❌ All MongoDB connections failed: {str(e3)[:200]}")
             _client = MongoClient("mongodb://localhost:27017")
             return _client
 

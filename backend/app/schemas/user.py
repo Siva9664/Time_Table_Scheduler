@@ -6,6 +6,9 @@ class UserBase(BaseModel):
     username: str
     email: EmailStr
     full_name: Optional[str] = None
+    role: Optional[str] = "faculty"  # "admin" or "faculty"
+    tenant_db_name: Optional[str] = None
+    tenant_id: Optional[str] = None
 
 class UserCreate(UserBase):
     password: str

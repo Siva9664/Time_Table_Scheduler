@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { isAdmin } from '../../utils/auth';
 import {
     Menu,
-    ChevronLeft,
     LayoutDashboard,
     Building2,
     Layers,
@@ -35,6 +35,8 @@ const Icons = {
 export default function Sidebar({ onLogout }) {
     const location = useLocation();
     const [isExpanded, setIsExpanded] = useState(false);
+    const admin = isAdmin();
+    
     const isActive = (path) => location.pathname === path;
 
     const NavItem = ({ to, label, icon: Icon }) => (
@@ -79,19 +81,22 @@ export default function Sidebar({ onLogout }) {
             <nav className="flex-1 overflow-y-auto py-6 scrollbar-hide space-y-1">
                 <NavItem to="/" label="Dashboard" icon={Icons.Dashboard} />
 
-                <div className="h-px bg-slate-800 my-4 mx-4" />
-
-                <NavItem to="/departments" label="Departments" icon={Icons.Departments} />
-                <NavItem to="/batches" label="Batches" icon={Icons.Batches} />
-                <NavItem to="/classes" label="Classes" icon={Icons.Classes} />
-                <NavItem to="/subjects" label="Subjects" icon={Icons.Subjects} />
-                <NavItem to="/faculty" label="Faculty" icon={Icons.Faculty} />
-                <NavItem to="/rooms" label="Rooms" icon={Icons.Rooms} />
-                <NavItem to="/mapping" label="Mapping" icon={Icons.Mapping} />
-
-                <div className="h-px bg-slate-800 my-4 mx-4" />
-
-                <NavItem to="/generate" label="Generate" icon={Icons.Generate} />
+                {admin && (
+                    <>
+                        <div className="h-px bg-slate-800 my-4 mx-4" />
+                        <NavItem to="/departments" label="Departments" icon={Icons.Departments} />
+                        <NavItem to="/batches" label="Batches" icon={Icons.Batches} />
+                        <NavItem to="/classes" label="Classes" icon={Icons.Classes} />
+                        <NavItem to="/subjects" label="Subjects" icon={Icons.Subjects} />
+                        <NavItem to="/faculty" label="Faculty" icon={Icons.Faculty} />
+                        <NavItem to="/rooms" label="Rooms" icon={Icons.Rooms} />
+                        <NavItem to="/mapping" label="Mapping" icon={Icons.Mapping} />
+                        
+                        <div className="h-px bg-slate-800 my-4 mx-4" />
+                        <NavItem to="/generate" label="Generate" icon={Icons.Generate} />
+                    </>
+                )}
+                
                 <NavItem to="/view" label="Timetables" icon={Icons.Timetables} />
                 <NavItem to="/settings" label="Settings" icon={Icons.Settings} />
             </nav>

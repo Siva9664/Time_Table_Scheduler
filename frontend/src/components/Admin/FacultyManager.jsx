@@ -3,13 +3,15 @@ import { useForm } from 'react-hook-form';
 import { facultyAPI, departmentAPI } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
 import ConfirmationModal from '../Layout/ConfirmationModal';
-import { Edit, Trash2, Plus } from 'lucide-react';
+import { Edit, Trash2, Plus, Users, Key } from 'lucide-react';
+import FacultyAccounts from './FacultyAccounts';
 
 export default function FacultyManager() {
   const [faculty, setFaculty] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [editData, setEditData] = useState(null); // Track item being edited
+  const [activeTab, setActiveTab] = useState('resources'); // 'resources' | 'accounts'
   const { register, handleSubmit, reset, setValue } = useForm();
   const { showToast } = useToast();
 
@@ -94,18 +96,39 @@ export default function FacultyManager() {
       />
 
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold">Faculty</h1>
-        <button
-          onClick={() => {
-            setEditData(null);
-            reset();
-            setShowForm(!showForm);
-          }}
-          className="btn btn-primary flex items-center gap-2"
-        >
-          {showForm ? 'Cancel' : <><Plus size={20} /> Add Faculty</>}
-        </button>
+        <h1 className="text-3xl font-bold">Faculty Management</h1>
+        
+        {/* Tabs */}
+        <div className="flex bg-slate-100 p-1 rounded-xl">
+           <button 
+             onClick={() => setActiveTab('resources')}
+             className={`px-4 py-2 flex items-center gap-2 rounded-lg font-bold text-sm transition-all ${activeTab === 'resources' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-700'}`}
+           >
+             <Users size={16} /> Faculty Staff
+           </button>
+           <button 
+             onClick={() => setActiveTab('accounts')}
+             className={`px-4 py-2 flex items-center gap-2 rounded-lg font-bold text-sm transition-all ${activeTab === 'accounts' ? 'bg-white shadow-sm text-slate-800' : 'text-slate-500 hover:text-slate-700'}`}
+           >
+             <Key size={16} /> Login Accounts
+           </button>
+        </div>
       </div>
+
+      {activeTab === 'resources' ? (
+        <>
+          <div className="flex justify-end mb-4">
+            <button
+              onClick={() => {
+                setEditData(null);
+                reset();
+                setShowForm(!showForm);
+              }}
+              className="btn btn-primary flex items-center gap-2"
+            >
+              {showForm ? 'Cancel' : <><Plus size={20} /> Add Faculty Resource</>}
+            </button>
+          </div>
 
       {showForm && (
         <div className="card mb-6">
@@ -158,6 +181,10 @@ export default function FacultyManager() {
             </div>
           ))}
         </div>
+      )}
+        </>
+      ) : (
+        <FacultyAccounts />
       )}
     </div>
   );

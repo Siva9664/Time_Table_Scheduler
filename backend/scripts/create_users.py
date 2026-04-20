@@ -18,6 +18,7 @@ def init_db():
                 "full_name": "System Administrator",
                 "hashed_password": get_password_hash("admin123"),
                 "is_active": True,
+                "role": "admin",
                 "is_admin": True,
                 "created_at": datetime.datetime.utcnow()
             }
@@ -34,6 +35,7 @@ def init_db():
                 "full_name": "Shiva Admin",
                 "hashed_password": get_password_hash("Shiva123"),
                 "is_active": True,
+                "role": "admin",
                 "is_admin": True,
                 "created_at": datetime.datetime.utcnow()
             }

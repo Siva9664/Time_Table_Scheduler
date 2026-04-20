@@ -30,6 +30,9 @@ export const authAPI = {
   register: (data) => api.post('/auth/register', data),
   getCurrentUser: () => api.get('/auth/me'),
   changePassword: (data) => api.post('/auth/change-password', data),
+  createFaculty: (data) => api.post('/auth/faculty', data),
+  getFacultyAccounts: () => api.get('/auth/faculty'),
+  deleteFacultyAccount: (id) => api.delete(`/auth/faculty/${id}`),
 };
 
 export const batchAPI = {

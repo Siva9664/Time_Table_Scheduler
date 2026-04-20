@@ -5,7 +5,7 @@ from datetime import timedelta, datetime
 from ...database.database import get_db
 from ...models.user import user_helper
 from ...schemas.user import UserCreate, UserResponse, Token, UserChangePassword
-from ...core.security import verify_password, get_password_hash, create_access_token, get_current_user
+from ...core.security import verify_password, get_password_hash, create_access_token, get_current_user, get_admin_user
 from ...core.config import settings
 
 router = APIRouter(redirect_slashes=False)
@@ -16,19 +16,73 @@ def register(user: UserCreate, db: Database = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Username already registered")
     if db["users"].find_one({"email": user.email}):
         raise HTTPException(status_code=400, detail="Email already registered")
+    if user.role != "admin":
+        raise HTTPException(status_code=400, detail="Public registration is only allowed for Admin accounts. Faculty must be created by an Admin.")
+        
     doc = {
         "username": user.username,
         "email": user.email,
         "full_name": user.full_name,
         "hashed_password": get_password_hash(user.password),
         "is_active": True,
+        "role": "admin",
+        "is_admin": True,
+        "created_at": datetime.utcnow(),
+        "updated_at": None,
+    }
+    result = db["users"].insert_one(doc)
+    
+    # Assign newly created admin a unique tenant DB
+    tenant_db_name = f"timetable_tenant_{str(result.inserted_id)}"
+    db["users"].update_one(
+        {"_id": result.inserted_id},
+        {"$set": {"tenant_db_name": tenant_db_name, "tenant_id": str(result.inserted_id)}}
+    )
+    
+    created = db["users"].find_one({"_id": result.inserted_id})
+    return user_helper(created)
+
+@router.post("/faculty", response_model=UserResponse)
+def create_faculty_account(user: UserCreate, db: Database = Depends(get_db), current_user: dict = Depends(get_admin_user)):
+    if db["users"].find_one({"username": user.username}):
+        raise HTTPException(status_code=400, detail="Username already registered")
+    if db["users"].find_one({"email": user.email}):
+        raise HTTPException(status_code=400, detail="Email already registered")
+        
+    doc = {
+        "username": user.username,
+        "email": user.email,
+        "full_name": user.full_name,
+        "hashed_password": get_password_hash(user.password),
+        "is_active": True,
+        "role": "faculty",
         "is_admin": False,
+        "tenant_id": str(current_user["_id"]),
+        "tenant_db_name": current_user.get("tenant_db_name", f"timetable_tenant_{current_user['_id']}"),
         "created_at": datetime.utcnow(),
         "updated_at": None,
     }
     result = db["users"].insert_one(doc)
     created = db["users"].find_one({"_id": result.inserted_id})
     return user_helper(created)
+
+@router.get("/faculty", response_model=list[UserResponse])
+def list_faculty_accounts(db: Database = Depends(get_db), current_user: dict = Depends(get_admin_user)):
+    cursor = db["users"].find({"role": "faculty", "tenant_id": str(current_user["_id"])})
+    return [user_helper(d) for d in cursor]
+
+@router.delete("/faculty/{id}")
+def delete_faculty_account(id: str, db: Database = Depends(get_db), current_user: dict = Depends(get_admin_user)):
+    from bson import ObjectId
+    try:
+        oid = ObjectId(id)
+    except:
+        raise HTTPException(status_code=400, detail="Invalid ID format")
+        
+    result = db["users"].delete_one({"_id": oid, "tenant_id": str(current_user["_id"])})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Faculty account not found or access denied")
+    return {"message": "Faculty account removed"}
 
 @router.post("/login", response_model=Token)
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Database = Depends(get_db)):
