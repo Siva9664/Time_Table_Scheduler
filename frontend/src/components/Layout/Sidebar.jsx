@@ -32,7 +32,7 @@ const Icons = {
     Logout: LogOut
 };
 
-export default function Sidebar({ onLogout }) {
+export default function Sidebar() {
     const location = useLocation();
     const [isExpanded, setIsExpanded] = useState(false);
     const admin = isAdmin();
@@ -100,25 +100,6 @@ export default function Sidebar({ onLogout }) {
                 <NavItem to="/view" label="Timetables" icon={Icons.Timetables} />
                 <NavItem to="/settings" label="Settings" icon={Icons.Settings} />
             </nav>
-
-            <div className="p-2 border-t border-slate-800/50">
-                <button
-                    onClick={onLogout}
-                    className="flex items-center h-12 w-full px-4 transition-all duration-1000 ease rounded-xl group relative text-slate-500 hover:text-red-400 hover:bg-red-400/10"
-                >
-                    <Icons.Logout size={20} className="shrink-0" />
-                    <span className={`ml-4 font-bold text-sm whitespace-nowrap overflow-hidden transition-all duration-1000 ease ${isExpanded ? 'max-w-[200px] opacity-100' : 'max-w-0 opacity-0'
-                        }`}>
-                        Logout
-                    </span>
-
-                    {!isExpanded && (
-                        <div className="absolute left-16 bg-red-600 text-white px-3 py-1.5 rounded-md text-xs font-bold opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-300 ease whitespace-nowrap shadow-xl z-50">
-                            Logout
-                        </div>
-                    )}
-                </button>
-            </div>
         </div>
     );
 }

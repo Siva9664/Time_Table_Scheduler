@@ -34,10 +34,6 @@ source venv/bin/activate
 pip install --upgrade pip setuptools wheel
 pip install -r requirements.txt
 
-# Seed initial data (safely runs create_all)
-export PYTHONPATH=$(pwd)
-python scripts/seed_data.py || true
-python scripts/create_admin_user.py || true
 
 echo "Backend setup complete!"
 cd ..
