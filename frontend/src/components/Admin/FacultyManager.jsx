@@ -63,7 +63,7 @@ export default function FacultyManager() {
     try {
       const payload = {
         ...data,
-        department_id: parseInt(data.department_id),
+        department_id: data.department_id || null,
         max_hours_per_week: parseInt(data.max_hours_per_week),
         unavailable_slots: editData ? editData.unavailable_slots : []
       };

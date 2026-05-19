@@ -54,7 +54,19 @@ Copy `.env.example` to `backend/.env` and edit it with your MongoDB connection d
 MONGODB_URL=mongodb+srv://username:password@cluster.mongodb.net/?appName=Scheduler
 DB_NAME=Time-Table-Scheduler
 SECRET_KEY=your-secret-key-change-this-in-production
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=gemma2:27b
+OLLAMA_TIMEOUT_SECONDS=60
 ```
+
+For AI constraint parsing, install Ollama, pull the configured model, and make sure the Ollama server is reachable:
+```powershell
+winget install Ollama.Ollama --accept-source-agreements --accept-package-agreements
+ollama pull gemma2:27b
+ollama run gemma2:27b
+```
+
+If Ollama is running on another machine on your local network, set `OLLAMA_BASE_URL` in `backend/.env` to that machine's address, for example `http://192.168.1.50:11434`.
 
 #### 3. Setup & Start Backend
 Open a terminal and run:

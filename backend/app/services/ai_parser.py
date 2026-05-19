@@ -1,26 +1,20 @@
-try:
-    import google.generativeai as genai
-    GENAI_AVAILABLE = True
-except ImportError:
-    GENAI_AVAILABLE = False
 import json
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
+from urllib import request as urlrequest
+from urllib.error import URLError, HTTPError
 
 class AIConstraintParser:
-    def __init__(self, api_key: str):
-        if not api_key:
-            raise ValueError("API Key is required for AI features")
-        if not GENAI_AVAILABLE:
-            print("WARNING: google-generativeai is not installed. AI features disabled.")
-            self.model = None
-            return
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-pro')
+    def __init__(self, base_url: str, model: str, timeout_seconds: int = 60):
+        if not base_url:
+            raise ValueError("Ollama base URL is required for AI features")
+        if not model:
+            raise ValueError("Ollama model is required for AI features")
+
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.timeout_seconds = timeout_seconds
 
     def parse_constraints(self, text: str) -> List[Dict[str, Any]]:
-        if not GENAI_AVAILABLE or not getattr(self, 'model', None):
-            print("AI parsing disabled - missing google-generativeai")
-            return []
         """
         Parses natural language text into structured JSON constraints.
         Expected Output Format:
@@ -53,15 +47,51 @@ class AIConstraintParser:
         """
         
         try:
-            response = self.model.generate_content(prompt)
-            # Clean response if it contains markdown code blocks
-            clean_text = response.text.strip()
-            if clean_text.startswith("```json"):
-                clean_text = clean_text[7:]
-            if clean_text.endswith("```"):
-                clean_text = clean_text[:-3]
-            
-            return json.loads(clean_text)
+            clean_text = self._generate(prompt)
+            parsed = json.loads(clean_text)
+            if isinstance(parsed, list):
+                return parsed
+            if isinstance(parsed, dict) and isinstance(parsed.get("constraints"), list):
+                return parsed["constraints"]
+            raise ValueError("Expected a JSON array of constraints")
         except Exception as e:
             print(f"AI Parse Error: {e}")
             return [] # Return empty list on failure, don't crash the scheduler
+
+    def _generate(self, prompt: str) -> str:
+        payload = json.dumps({
+            "model": self.model,
+            "prompt": prompt,
+            "stream": False,
+            "format": "json",
+            "options": {
+                "temperature": 0
+            }
+        }).encode("utf-8")
+
+        req = urlrequest.Request(
+            f"{self.base_url}/api/generate",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        try:
+            with urlrequest.urlopen(req, timeout=self.timeout_seconds) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except HTTPError as e:
+            raise RuntimeError(f"Ollama HTTP error {e.code}: {e.reason}") from e
+        except URLError as e:
+            raise RuntimeError(f"Could not connect to Ollama at {self.base_url}: {e.reason}") from e
+
+        clean_text = data.get("response", "").strip()
+        if clean_text.startswith("```json"):
+            clean_text = clean_text[7:].strip()
+        elif clean_text.startswith("```"):
+            clean_text = clean_text[3:].strip()
+        if clean_text.endswith("```"):
+            clean_text = clean_text[:-3].strip()
+
+        if not clean_text:
+            raise RuntimeError("Ollama returned an empty response")
+        return clean_text

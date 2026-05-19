@@ -134,6 +134,55 @@ class TimetableScheduler:
         h, m = map(int, time_str.split(':'))
         return h * 60 + m
 
+    def _slot_blocks_day(self, slot: Dict[str, Any], day_idx: int, day_name: str) -> bool:
+        slot_day = slot.get("day") or slot.get("day_name")
+        if slot_day and str(slot_day).lower() == day_name.lower():
+            return True
+
+        slot_day_index = slot.get("day_index")
+        if slot_day_index is not None:
+            try:
+                return int(slot_day_index) == day_idx
+            except (TypeError, ValueError):
+                return False
+
+        return not slot_day
+
+    def _slot_blocks_period(self, slot: Dict[str, Any], period_idx: int, start: int, end: int) -> bool:
+        period_value = slot.get("period")
+        if period_value is not None:
+            try:
+                return int(period_value) == period_idx + 1
+            except (TypeError, ValueError):
+                return False
+
+        periods = slot.get("periods")
+        if isinstance(periods, list):
+            normalized_periods = set()
+            for value in periods:
+                try:
+                    normalized_periods.add(int(value))
+                except (TypeError, ValueError):
+                    continue
+            return period_idx + 1 in normalized_periods
+
+        start_time = slot.get("start") or slot.get("start_time")
+        end_time = slot.get("end") or slot.get("end_time")
+        if start_time and end_time:
+            slot_start = self._parse_time(start_time)
+            slot_end = self._parse_time(end_time)
+            return start < slot_end and slot_start < end
+
+        return True
+
+    def _is_faculty_unavailable(self, faculty: _Obj, day_idx: int, day_name: str, period_idx: int, start: int, end: int) -> bool:
+        for slot in faculty.unavailable_slots or []:
+            if not isinstance(slot, dict):
+                continue
+            if self._slot_blocks_day(slot, day_idx, day_name) and self._slot_blocks_period(slot, period_idx, start, end):
+                return True
+        return False
+
     def _get_class_period_intervals(self, class_obj: _Obj) -> List[Tuple[int, int]]:
         """
         Returns a list of (start_minute, end_minute) for each period of the day for this class.
@@ -182,6 +231,7 @@ class TimetableScheduler:
         logger.info("Step 2/5: Creating decision variables...")
 
         class_timings = {c.id: self._get_class_period_intervals(c) for c in self.classes}
+        faculty_map = {f.id: f for f in self.faculty}
 
         self.vars_by_room = {r.id: {d: [] for d in range(self.num_days)} for r in self.rooms}
         self.vars_by_faculty = {f.id: {d: [] for d in range(self.num_days)} for f in self.faculty}
@@ -213,6 +263,9 @@ class TimetableScheduler:
                     if period >= len(c_intervals):
                         continue
                     start, end = c_intervals[period]
+                    faculty = faculty_map.get(subject.faculty_id)
+                    if faculty and self._is_faculty_unavailable(faculty, day, self.working_days[day], period, start, end):
+                        continue
 
                     for room in valid_rooms:
                         var_name = f"s{subject.id}_d{day}_p{period}_r{room.id}"

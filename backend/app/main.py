@@ -6,11 +6,22 @@ from .core.logging_config import configure_logging
 from .database.database import get_client, close_mongo_connection
 import time
 import logging
+from urllib.parse import urlsplit, urlunsplit
 
 # Initialize Logging
 configure_logging()
 
 logger = logging.getLogger(__name__)
+
+def _mask_mongo_url(url: str) -> str:
+    try:
+        parts = urlsplit(url)
+        if "@" not in parts.netloc:
+            return url
+        host = parts.netloc.rsplit("@", 1)[1]
+        return urlunsplit((parts.scheme, f"***:***@{host}", parts.path, parts.query, parts.fragment))
+    except Exception:
+        return "<configured MongoDB URL>"
 
 app = FastAPI(title="AI Timetable Scheduler", description="Dynamic timetable scheduling using OR-Tools", version="1.0.0")
 
@@ -31,7 +42,7 @@ async def startup_event():
     try:
         client = get_client()
         client.admin.command("ping")
-        logger.info(f"✅ Connected to MongoDB at {settings.MONGODB_URL} | DB: {settings.DB_NAME}")
+        logger.info(f"✅ Connected to MongoDB at {_mask_mongo_url(settings.MONGODB_URL)} | DB: {settings.DB_NAME}")
     except Exception as e:
         logger.error(f"❌ Could not connect to MongoDB: {e}")
 

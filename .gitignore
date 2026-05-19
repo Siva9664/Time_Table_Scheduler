@@ -10,6 +10,8 @@ frontend/node_modules/
 .gemini/
 .idea/
 *.local
+.env
+backend/.env
 *.log
 # Node
 node_modules/

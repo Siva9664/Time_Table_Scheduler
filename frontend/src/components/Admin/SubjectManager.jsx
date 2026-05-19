@@ -53,8 +53,8 @@ export default function SubjectManager() {
     try {
       const payload = {
         ...data,
-        department_id: parseInt(data.department_id),
-        batch_id: parseInt(data.batch_id),
+        department_id: data.department_id || null,
+        batch_id: data.batch_id || null,
         faculty_id: null,
         hours_per_week: parseInt(data.hours_per_week),
         requires_lab: data.requires_lab === 'true'

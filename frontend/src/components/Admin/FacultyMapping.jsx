@@ -63,8 +63,8 @@ const FacultyMapping = () => {
         setSaving(true);
         try {
             await subjectAPI.update(selectedSubjectId, {
-                class_id: parseInt(selectedClassId),
-                faculty_id: parseInt(selectedFacultyId)
+                class_id: selectedClassId,
+                faculty_id: selectedFacultyId
             });
 
             // Refresh data
@@ -121,12 +121,12 @@ const FacultyMapping = () => {
     };
 
     const getFacultyName = (facId) => {
-        const fac = faculties.find(f => f.id === parseInt(facId));
+        const fac = faculties.find(f => f.id === facId);
         return fac ? fac.name : 'Unassigned';
     };
 
     const getClassName = (classId) => {
-        const cls = classes.find(c => c.id === parseInt(classId));
+        const cls = classes.find(c => c.id === classId);
         return cls ? `${cls.name} ${cls.section}` : 'Unassigned';
     };
 
@@ -134,15 +134,15 @@ const FacultyMapping = () => {
 
     // 1. Filter Classes based on Batch AND Department
     const availableClasses = classes.filter(c => {
-        const matchBatch = !selectedBatchId || c.batch_id === parseInt(selectedBatchId);
-        const matchDept = !selectedDeptId || c.department_id === parseInt(selectedDeptId);
+        const matchBatch = !selectedBatchId || c.batch_id === selectedBatchId;
+        const matchDept = !selectedDeptId || c.department_id === selectedDeptId;
         return matchBatch && matchDept;
     });
 
     // 2. Filter Subjects based on Class
     const availableSubjects = subjects.filter(s => {
         if (!selectedClassId) return false;
-        const selectedClass = classes.find(c => c.id === parseInt(selectedClassId));
+        const selectedClass = classes.find(c => c.id === selectedClassId);
         if (!selectedClass) return false;
 
         return s.department_id === selectedClass.department_id &&
@@ -152,10 +152,10 @@ const FacultyMapping = () => {
     // 3. Filter Faculties based on Dept
     const availableFaculties = faculties.filter(f => {
         // If Dept selected, filter by it
-        if (selectedDeptId) return f.department_id === parseInt(selectedDeptId);
+        if (selectedDeptId) return f.department_id === selectedDeptId;
         // Fallback to Class/Subject dept logic if simplified
         if (selectedClassId) {
-            const cls = classes.find(c => c.id === parseInt(selectedClassId));
+            const cls = classes.find(c => c.id === selectedClassId);
             return cls ? f.department_id === cls.department_id : true;
         }
         return true;

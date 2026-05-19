@@ -51,10 +51,10 @@ export default function ClassManager() {
     try {
       const payload = {
         ...data,
-        department_id: parseInt(data.department_id),
+        department_id: data.department_id || null,
         semester: parseInt(data.semester),
         student_count: parseInt(data.student_count),
-        batch_id: data.batch_id ? parseInt(data.batch_id) : null
+        batch_id: data.batch_id || null
       };
 
       if (editData) {
@@ -192,4 +192,3 @@ export default function ClassManager() {
     </div>
   );
 }
-

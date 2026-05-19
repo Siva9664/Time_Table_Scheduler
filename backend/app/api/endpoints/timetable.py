@@ -220,9 +220,13 @@ def update_room(id: str, room: RoomUpdate, db: Database = Depends(get_tenant_db)
 @router.post("/generate", response_model=TimetableResponse)
 def generate_timetable(request: TimetableGenerateRequest, db: Database = Depends(get_tenant_db), current_user: dict = Depends(get_admin_user)):
     custom_constraints = []
-    if request.constraints_text and settings.GEMINI_API_KEY:
+    if request.constraints_text:
         try:
-            parser = AIConstraintParser(api_key=settings.GEMINI_API_KEY)
+            parser = AIConstraintParser(
+                base_url=settings.OLLAMA_BASE_URL,
+                model=settings.OLLAMA_MODEL,
+                timeout_seconds=settings.OLLAMA_TIMEOUT_SECONDS,
+            )
             custom_constraints = parser.parse_constraints(request.constraints_text)
             print(f"Parsed Constraints: {custom_constraints}")
         except Exception as e:
