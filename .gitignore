@@ -4,7 +4,6 @@ build/
 *.db
 dist/
 .DS_Store
-.env
 env/
 .eslintcache
 frontend/node_modules/
