@@ -203,11 +203,29 @@ def generate_timetable(request: TimetableGenerateRequest, db: Database = Depends
     custom_constraints = []
     if request.constraints_text:
         try:
+            # ── Build context from live DB data so AI can match real names ──
+            faculty_query = {}
+            if request.department_ids:
+                faculty_query = {"department_id": {"$in": request.department_ids}}
+            faculty_docs  = list(db["faculty"].find(faculty_query, {"name": 1}))
+            subject_docs  = list(db["subjects"].find({}, {"name": 1}))
+            class_docs    = list(db["classes"].find({}, {"name": 1, "section": 1}))
+
+            context = {
+                "faculty_names": [d["name"] for d in faculty_docs  if d.get("name")],
+                "subject_names": [d["name"] for d in subject_docs  if d.get("name")],
+                "class_names":   [
+                    f"{d.get('name', '')} {d.get('section', '')}".strip()
+                    for d in class_docs if d.get("name")
+                ],
+            }
+
             parser = AIConstraintParser(
                 model=settings.AI_MODEL,
                 timeout_seconds=settings.OPENAI_TIMEOUT_SECONDS,
                 api_key=settings.OPENAI_API_KEY,
                 api_base=settings.OPENAI_API_BASE,
+                context=context,
             )
             custom_constraints = parser.parse_constraints(request.constraints_text)
             print(f"Parsed Constraints: {custom_constraints}")

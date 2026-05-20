@@ -2,12 +2,19 @@ import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { timetableAPI } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
+import { useFormCache } from '../../hooks/useFormCache';
 
 export default function TimetableGenerator() {
   const [generating, setGenerating] = useState(false);
   const [result, setResult] = useState(null);
   const { register, handleSubmit, watch } = useForm();
   const { showToast } = useToast();
+  
+  // Watch all fields for caching and calculations
+  const formValues = watch();
+  
+  // Use form cache hook
+  const { clearCache } = useFormCache('timetableGeneratorCache', formValues, () => {}, true, false);
 
   // Watch fields for auto-calculation
   const startTime = watch('start_time');
@@ -52,6 +59,7 @@ export default function TimetableGenerator() {
       });
       setResult(response.data);
       showToast('Timetable generated successfully!', 'success');
+      clearCache();
     } catch (error) {
       showToast(error.response?.data?.detail || 'Failed to generate timetable', 'error');
     } finally {

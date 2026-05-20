@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { subjectAPI, departmentAPI, batchAPI, facultyAPI, classAPI } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
+import { useFormCache } from '../../hooks/useFormCache';
 import ConfirmationModal from '../Layout/ConfirmationModal';
 import { Edit, Trash2, Plus } from 'lucide-react';
 import CsvUploader from '../Layout/CsvUploader';
@@ -14,12 +15,18 @@ export default function SubjectManager() {
   const [faculty, setFaculty] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [editData, setEditData] = useState(null);
-  const { register, handleSubmit, reset, setValue } = useForm();
+  const { register, handleSubmit, reset, setValue, watch } = useForm();
   const { showToast } = useToast();
 
   // Modal State
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [subjectToDelete, setSubjectToDelete] = useState(null);
+  
+  // Watch all form fields for caching
+  const formValues = watch();
+  
+  // Use form cache hook
+  const { clearCache } = useFormCache('subjectFormCache', formValues, setValue, showForm, !!editData);
 
   useEffect(() => { loadData(); }, []);
 
@@ -76,6 +83,7 @@ export default function SubjectManager() {
       reset();
       setEditData(null);
       setShowForm(false);
+      clearCache();
       loadData();
     } catch (error) {
       showToast(error.response?.data?.detail || 'Failed to save subject', 'error');
@@ -110,7 +118,8 @@ export default function SubjectManager() {
 
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">Subjects</h1>
-        <div className="flex items-center">
+        <div className="flex gap-2">
+          <CsvUploader type="subjects" onSuccess={loadData} />
           <button
             onClick={() => {
               setEditData(null);
@@ -121,7 +130,6 @@ export default function SubjectManager() {
           >
             {showForm ? 'Cancel' : <><Plus size={20} /> Add Subject</>}
           </button>
-          <CsvUploader type="subjects" />
         </div>
       </div>
 

@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { facultyAPI, departmentAPI } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
+import { useFormCache } from '../../hooks/useFormCache';
 import ConfirmationModal from '../Layout/ConfirmationModal';
+import CsvUploader from '../Layout/CsvUploader';
 import { Edit, Trash2, Plus, Users, Key } from 'lucide-react';
 import FacultyAccounts from './FacultyAccounts';
 
@@ -10,16 +12,24 @@ export default function FacultyManager() {
   const [faculty, setFaculty] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [showForm, setShowForm] = useState(false);
-  const [editData, setEditData] = useState(null); // Track item being edited
+  const [editData, setEditData] = useState(null);
   const [activeTab, setActiveTab] = useState('resources'); // 'resources' | 'accounts'
-  const { register, handleSubmit, reset, setValue } = useForm();
+  const { register, handleSubmit, reset, setValue, watch } = useForm();
   const { showToast } = useToast();
 
   // Modal State
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [facultyToDelete, setFacultyToDelete] = useState(null);
 
-  useEffect(() => { loadData(); }, []);
+  // Watch all form fields for caching
+  const formValues = watch();
+  
+  // Use form cache hook
+  const { clearCache } = useFormCache('facultyFormCache', formValues, setValue, showForm, !!editData);
+
+  useEffect(() => { 
+    loadData();
+  }, []);
 
   const loadData = async () => {
     try {
@@ -79,6 +89,7 @@ export default function FacultyManager() {
       reset();
       setEditData(null);
       setShowForm(false);
+      clearCache();
       loadData();
     } catch (error) {
       showToast(error.response?.data?.detail || 'Failed to save faculty', 'error');
@@ -117,11 +128,11 @@ export default function FacultyManager() {
 
       {activeTab === 'resources' ? (
         <>
-          <div className="flex justify-end mb-4">
+          <div className="flex justify-end mb-4 gap-2">
+            <CsvUploader type="faculty" onSuccess={loadData} />
             <button
               onClick={() => {
                 setEditData(null);
-                reset();
                 setShowForm(!showForm);
               }}
               className="btn btn-primary flex items-center gap-2"
@@ -139,7 +150,17 @@ export default function FacultyManager() {
             <div><label className="block text-sm font-medium mb-2">Department *</label><select {...register('department_id', { required: true })} className="input"><option value="">Select</option>{departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></div>
             <div><label className="block text-sm font-medium mb-2">Max Hours/Week</label><input {...register('max_hours_per_week')} type="number" defaultValue="20" className="input" /></div>
             <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => setShowForm(false)} className="btn btn-secondary">Cancel</button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowForm(false);
+                  setEditData(null);
+                  reset();
+                }}
+                className="btn btn-secondary"
+              >
+                Cancel
+              </button>
               <button type="submit" className="btn btn-primary">{editData ? 'Update' : 'Add'}</button>
             </div>
           </form>

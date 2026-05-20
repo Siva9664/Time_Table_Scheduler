@@ -12,7 +12,8 @@ import {
   LayoutDashboard,
   Clock,
   ChevronRight,
-  User
+  User,
+  Download
 } from 'lucide-react';
 
 export default function Dashboard() {
@@ -139,6 +140,7 @@ export default function Dashboard() {
                 <ActionButton icon={BookOpen} label="Manage Subjects" color="bg-slate-700" onClick={() => navigate('/subjects')} />
                 <ActionButton icon={Users} label="Faculty Mapping" color="bg-blue-600" onClick={() => navigate('/mapping')} />
                 <ActionButton icon={Calendar} label="View Timetables" color="bg-orange-500" onClick={() => navigate('/view')} />
+                <ActionButton icon={Download} label="Download Templates" color="bg-purple-600" onClick={() => { window.location.href = '/api/imports/templates'; }} />
                 <ActionButton icon={Plus} label="Generate New" color="bg-slate-600" onClick={() => navigate('/generate')} />
              </>
           ) : (

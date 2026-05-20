@@ -330,62 +330,239 @@ class TimetableScheduler:
         add_overlap_constraints(self.vars_by_faculty, "Faculty")
         logger.debug("Added Resource Conflict (Faculty) constraints")
 
-        # 4. DEFAULT: Labs Consecutive
+        # 4. DEFAULT: Labs — all hours on ONE day, and consecutive within that day
         for sub in self.subjects:
-            if sub.requires_lab:
-                for day in range(self.num_days):
-                    period_vars = [[] for _ in range(self.periods_per_day)]
-                    for period in range(self.periods_per_day):
-                        key = f"s{sub.id}_d{day}_p{period}"
-                        if key in self.variables:
-                            period_vars[period].append(self.variables[key])
+            if not sub.requires_lab:
+                continue
 
-                    all_day_vars = [v for p_list in period_vars for v in p_list]
-                    if not all_day_vars:
-                        continue
+            hours = sub.hours_per_week or 1
 
-                    if sub.hours_per_week >= 2:
-                        is_scheduled = self.model.NewBoolVar(f"sched_s{sub.id}_d{day}")
-                        total_daily_slots = sum(all_day_vars)
-                        self.model.Add(total_daily_slots <= self.periods_per_day * is_scheduled)
-                        self.model.Add(total_daily_slots >= is_scheduled)
-                        self.model.Add(total_daily_slots >= 2 * is_scheduled)
+            # is_lab_day[day] = 1 if this day is chosen for the lab session
+            is_lab_day = [
+                self.model.NewBoolVar(f"lab_day_s{sub.id}_d{day}")
+                for day in range(self.num_days)
+            ]
+            # At most one lab day per week
+            self.model.Add(sum(is_lab_day) <= 1)
 
-                    p_present_vars = []
-                    for p in range(self.periods_per_day):
-                        if period_vars[p]:
-                            p_var = self.model.NewBoolVar(f"pres_s{sub.id}_d{day}_p{p}")
-                            self.model.Add(sum(period_vars[p]) == p_var)
-                            p_present_vars.append(p_var)
-                        else:
-                            p_present_vars.append(0)
+            for day in range(self.num_days):
+                period_vars = []
+                for period in range(self.periods_per_day):
+                    key = f"s{sub.id}_d{day}_p{period}"
+                    period_vars.append(self.variables[key] if key in self.variables else None)
 
-                    for i in range(self.periods_per_day):
-                        for k in range(i + 2, self.periods_per_day):
-                            for j in range(i + 1, k):
-                                self.model.Add(p_present_vars[i] + p_present_vars[k] - p_present_vars[j] <= 1)
+                valid_periods = [(p, v) for p, v in enumerate(period_vars) if v is not None]
+                all_day_vars = [v for _, v in valid_periods]
 
-        logger.debug("Added Default (Lab) constraints")
+                if not all_day_vars:
+                    # No slots available this day → cannot be lab day
+                    self.model.Add(is_lab_day[day] == 0)
+                    continue
+
+                total_daily = sum(all_day_vars)
+
+                # If this IS the lab day → exactly `hours` slots must be scheduled
+                self.model.Add(total_daily == hours * is_lab_day[day])
+
+                # Consecutive-block enforcement:
+                # Build presence vars per period index
+                p_present = []
+                for p in range(self.periods_per_day):
+                    key = f"s{sub.id}_d{day}_p{p}"
+                    if key in self.variables:
+                        pv = self.model.NewBoolVar(f"pres_s{sub.id}_d{day}_p{p}")
+                        self.model.Add(self.variables[key] == pv)
+                        p_present.append(pv)
+                    else:
+                        p_present.append(None)
+
+                # No gap between any two scheduled periods (contiguous block)
+                for i in range(self.periods_per_day):
+                    for k in range(i + 2, self.periods_per_day):
+                        for j in range(i + 1, k):
+                            vi = p_present[i]
+                            vk = p_present[k]
+                            vj = p_present[j]
+                            if vi is None or vk is None or vj is None:
+                                continue
+                            # if i and k are both scheduled, j must also be scheduled
+                            self.model.Add(vi + vk - vj <= 1)
+
+        logger.debug("Added Default (Lab) consecutive + single-day constraints")
 
         # 5. CUSTOM CONSTRAINTS
         for constraint in self.custom_constraints:
             c_type = constraint.get("type")
+
+            # ── faculty_availability ───────────────────────────────────────────
             if c_type == "faculty_availability":
                 f_name = constraint.get("faculty_name", "")
                 allowed_days = [d.lower() for d in constraint.get("available_days", []) if isinstance(d, str)]
-
                 target_fac = self._find_faculty_by_name(f_name)
                 if target_fac:
                     for day_idx, day_name in enumerate(self.working_days):
                         if day_name.lower() not in allowed_days:
-                            if day_idx in self.vars_by_faculty.get(target_fac.id, {}):
-                                entries = self.vars_by_faculty[target_fac.id][day_idx]
-                                for e in entries:
-                                    self.model.Add(e['var'] == 0)
+                            entries = self.vars_by_faculty.get(target_fac.id, {}).get(day_idx, [])
+                            for e in entries:
+                                self.model.Add(e['var'] == 0)
+                    logger.debug(f"Applied faculty_availability for '{f_name}'")
+                else:
+                    logger.warning(f"faculty_availability: faculty '{f_name}' not found in loaded data")
 
+            # ── subject_max_per_day ────────────────────────────────────────────
+            elif c_type == "subject_max_per_day":
+                sub_name = str(constraint.get("subject_name", "")).strip().lower()
+                max_pd = int(constraint.get("max_per_day", 1))
+                for sub in self.subjects:
+                    if str(sub.name or "").strip().lower() == sub_name or sub_name in str(sub.name or "").strip().lower():
+                        for day in range(self.num_days):
+                            day_vars = [
+                                self.variables[f"s{sub.id}_d{day}_p{p}"]
+                                for p in range(self.periods_per_day)
+                                if f"s{sub.id}_d{day}_p{p}" in self.variables
+                            ]
+                            if day_vars:
+                                self.model.Add(sum(day_vars) <= max_pd)
+                logger.debug(f"Applied subject_max_per_day for '{sub_name}' (max={max_pd})")
+
+            # ── preferred_time_slot ────────────────────────────────────────────
+            elif c_type == "preferred_time_slot":
+                target = str(constraint.get("target", "")).strip().lower()
+                pref = str(constraint.get("preference", "morning")).lower()
+                half = self.periods_per_day // 2
+
+                # Determine which periods to PREFER (soft: penalise non-preferred)
+                # We implement this as a hard constraint to keep it simple & reliable
+                if pref in {"morning", "first_half"}:
+                    preferred_periods = set(range(0, half))
+                else:  # afternoon / second_half
+                    preferred_periods = set(range(half, self.periods_per_day))
+
+                non_preferred = set(range(self.periods_per_day)) - preferred_periods
+
+                for sub in self.subjects:
+                    if target in str(sub.name or "").strip().lower():
+                        for day in range(self.num_days):
+                            for p in non_preferred:
+                                key = f"s{sub.id}_d{day}_p{p}"
+                                if key in self.variables:
+                                    self.model.Add(self.variables[key] == 0)
+                logger.debug(f"Applied preferred_time_slot for '{target}' → {pref}")
+
+            # ── avoid_time_slot ────────────────────────────────────────────────
+            elif c_type == "avoid_time_slot":
+                target = str(constraint.get("target", "")).strip().lower()
+                target_type = str(constraint.get("target_type", "class")).lower()
+                blocked_periods = [int(p) - 1 for p in constraint.get("periods", [])]  # convert 1-indexed → 0-indexed
+
+                if target_type == "class":
+                    for cls in self.classes:
+                        if target in str(cls.name or "").strip().lower():
+                            cls_subjects = [s for s in self.subjects if s.class_id == cls.id]
+                            for sub in cls_subjects:
+                                for day in range(self.num_days):
+                                    for p in blocked_periods:
+                                        if 0 <= p < self.periods_per_day:
+                                            key = f"s{sub.id}_d{day}_p{p}"
+                                            if key in self.variables:
+                                                self.model.Add(self.variables[key] == 0)
+                elif target_type == "subject":
+                    for sub in self.subjects:
+                        if target in str(sub.name or "").strip().lower():
+                            for day in range(self.num_days):
+                                for p in blocked_periods:
+                                    if 0 <= p < self.periods_per_day:
+                                        key = f"s{sub.id}_d{day}_p{p}"
+                                        if key in self.variables:
+                                            self.model.Add(self.variables[key] == 0)
+                logger.debug(f"Applied avoid_time_slot for '{target}' (periods={blocked_periods})")
+
+            # ── consecutive_periods ────────────────────────────────────────────
+            elif c_type == "consecutive_periods":
+                sub_type = str(constraint.get("subject_type", "lab")).strip().lower()
+                for sub in self.subjects:
+                    matches = False
+                    if sub_type == "lab" and sub.requires_lab:
+                        matches = True
+                    elif sub_type in str(sub.name or "").strip().lower() or sub_type in str(sub.code or "").strip().lower():
+                        matches = True
+                    
+                    if matches:
+                        for day in range(self.num_days):
+                            p_present = []
+                            for p in range(self.periods_per_day):
+                                key = f"s{sub.id}_d{day}_p{p}"
+                                if key in self.variables:
+                                    pv = self.model.NewBoolVar(f"custom_pres_s{sub.id}_d{day}_p{p}")
+                                    self.model.Add(self.variables[key] == pv)
+                                    p_present.append(pv)
+                                else:
+                                    p_present.append(None)
+                            
+                            for i in range(self.periods_per_day):
+                                for k in range(i + 2, self.periods_per_day):
+                                    for j in range(i + 1, k):
+                                        vi = p_present[i]
+                                        vk = p_present[k]
+                                        vj = p_present[j]
+                                        if vi is not None and vk is not None and vj is not None:
+                                            self.model.Add(vi + vk - vj <= 1)
+                logger.debug(f"Applied consecutive_periods for type '{sub_type}'")
+
+            # ── class_gap ──────────────────────────────────────────────────────
+            elif c_type == "class_gap":
+                cls_name = str(constraint.get("class_name", "")).strip().lower()
+                min_gap = int(constraint.get("min_gap", 1))
+                for cls in self.classes:
+                    if cls_name in str(cls.name or "").strip().lower():
+                        cls_subjects = [s for s in self.subjects if s.class_id == cls.id]
+                        for sub in cls_subjects:
+                            for day in range(self.num_days):
+                                for p in range(self.periods_per_day):
+                                    for gap in range(1, min_gap + 1):
+                                        p_next = p + gap
+                                        if p_next < self.periods_per_day:
+                                            key1 = f"s{sub.id}_d{day}_p{p}"
+                                            key2 = f"s{sub.id}_d{day}_p{p_next}"
+                                            if key1 in self.variables and key2 in self.variables:
+                                                self.model.Add(self.variables[key1] + self.variables[key2] <= 1)
+                logger.debug(f"Applied class_gap for class '{cls_name}' (min_gap={min_gap})")
+
+
+
+    def _add_distribution_objective(self):
+        """
+        Soft objective: minimise variance of theory-subject slots across days.
+        Implemented by minimising the maximum daily theory-load minus the minimum.
+        This encourages even spreading of theory subjects across the week.
+        """
+        theory_daily_load = []  # one IntVar per day
+        for day in range(self.num_days):
+            day_vars = []
+            for sub in self.subjects:
+                if not sub.requires_lab:  # only theory subjects
+                    for period in range(self.periods_per_day):
+                        key = f"s{sub.id}_d{day}_p{period}"
+                        if key in self.variables:
+                            day_vars.append(self.variables[key])
+            if day_vars:
+                load_var = self.model.NewIntVar(0, len(day_vars), f"load_day{day}")
+                self.model.Add(load_var == sum(day_vars))
+                theory_daily_load.append(load_var)
+
+        if len(theory_daily_load) >= 2:
+            max_load = self.model.NewIntVar(0, self.periods_per_day * len(self.subjects), "max_load")
+            min_load = self.model.NewIntVar(0, self.periods_per_day * len(self.subjects), "min_load")
+            self.model.AddMaxEquality(max_load, theory_daily_load)
+            self.model.AddMinEquality(min_load, theory_daily_load)
+            spread = self.model.NewIntVar(0, self.periods_per_day * len(self.subjects), "spread")
+            self.model.Add(spread == max_load - min_load)
+            self.model.Minimize(spread)
+            logger.debug("Added even distribution objective (minimise daily load spread)")
 
     def solve(self) -> Dict[str, Any]:
         logger.info(f"Step 4/5: Solving model (Time Limit: {self.time_limit_seconds}s)...")
+        self._add_distribution_objective()
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = self.time_limit_seconds
         solver.parameters.num_search_workers = 8

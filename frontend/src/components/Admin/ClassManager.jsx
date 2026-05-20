@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { classAPI, departmentAPI, batchAPI } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
+import { useFormCache } from '../../hooks/useFormCache';
 import ConfirmationModal from '../Layout/ConfirmationModal';
+import CsvUploader from '../Layout/CsvUploader';
 import { Edit, Trash2, Plus } from 'lucide-react';
 
 export default function ClassManager() {
@@ -11,14 +13,22 @@ export default function ClassManager() {
   const [batches, setBatches] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [editData, setEditData] = useState(null);
-  const { register, handleSubmit, reset, setValue } = useForm();
+  const { register, handleSubmit, reset, setValue, watch } = useForm();
   const { showToast } = useToast();
 
   // Modal State
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [classToDelete, setClassToDelete] = useState(null);
 
-  useEffect(() => { loadData(); }, []);
+  // Watch all form fields for caching
+  const formValues = watch();
+  
+  // Use form cache hook
+  const { clearCache } = useFormCache('classFormCache', formValues, setValue, showForm, !!editData);
+
+  useEffect(() => { 
+    loadData();
+  }, []);
 
   const loadData = async () => {
     try {
@@ -68,6 +78,7 @@ export default function ClassManager() {
       reset();
       setEditData(null);
       setShowForm(false);
+      clearCache();
       loadData();
     } catch (error) {
       showToast(error.response?.data?.detail || 'Failed to save class', 'error');
@@ -107,16 +118,18 @@ export default function ClassManager() {
 
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">Classes</h1>
-        <button
-          onClick={() => {
-            setEditData(null);
-            reset();
-            setShowForm(!showForm);
-          }}
-          className="btn btn-primary flex items-center gap-2"
-        >
-          {showForm ? 'Cancel' : <><Plus size={20} /> Add Class</>}
-        </button>
+        <div className="flex gap-2">
+          <CsvUploader type="classes" onSuccess={loadData} />
+          <button
+            onClick={() => {
+              setEditData(null);
+              setShowForm(!showForm);
+            }}
+            className="btn btn-primary flex items-center gap-2"
+          >
+            {showForm ? 'Cancel' : <><Plus size={20} /> Add Class</>}
+          </button>
+        </div>
       </div>
 
       {showForm && (
@@ -146,7 +159,17 @@ export default function ClassManager() {
               <div><label className="block text-sm font-medium mb-2">Students</label><input {...register('student_count')} type="number" className="input" /></div>
             </div>
             <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => setShowForm(false)} className="btn btn-secondary">Cancel</button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowForm(false);
+                  setEditData(null);
+                  reset();
+                }}
+                className="btn btn-secondary"
+              >
+                Cancel
+              </button>
               <button type="submit" className="btn btn-primary">{editData ? 'Update' : 'Create'}</button>
             </div>
           </form>

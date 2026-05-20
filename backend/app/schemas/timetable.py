@@ -127,14 +127,6 @@ class FacultyResponse(FacultyBase):
     class Config:
         from_attributes = True
 
-class RoomBase(BaseModel):
-    name: str
-    room_type: str
-    capacity: int
-    has_projector: bool = False
-    has_computers: bool = False
-
-
 class TimetableGenerateRequest(BaseModel):
     name: str
     academic_year: str

@@ -3,6 +3,7 @@ import { subjectAPI, facultyAPI, classAPI, departmentAPI, batchAPI } from '../..
 import { useToast } from '../../context/ToastContext';
 import { Edit, Trash2 } from 'lucide-react';
 import ConfirmationModal from '../Layout/ConfirmationModal';
+import CsvUploader from '../Layout/CsvUploader';
 
 const FacultyMapping = () => {
     const [subjects, setSubjects] = useState([]);
@@ -29,7 +30,29 @@ const FacultyMapping = () => {
 
     useEffect(() => {
         loadData();
+        // Restore cached selections on mount
+        const cachedSelections = localStorage.getItem('facultyMappingCache');
+        if (cachedSelections) {
+            const cached = JSON.parse(cachedSelections);
+            if (cached.selectedBatchId) setSelectedBatchId(cached.selectedBatchId);
+            if (cached.selectedDeptId) setSelectedDeptId(cached.selectedDeptId);
+            if (cached.selectedClassId) setSelectedClassId(cached.selectedClassId);
+            if (cached.selectedSubjectId) setSelectedSubjectId(cached.selectedSubjectId);
+            if (cached.selectedFacultyId) setSelectedFacultyId(cached.selectedFacultyId);
+        }
     }, []);
+
+    // Cache selections whenever they change
+    useEffect(() => {
+        const selectionsToCache = {
+            selectedBatchId,
+            selectedDeptId,
+            selectedClassId,
+            selectedSubjectId,
+            selectedFacultyId
+        };
+        localStorage.setItem('facultyMappingCache', JSON.stringify(selectionsToCache));
+    }, [selectedBatchId, selectedDeptId, selectedClassId, selectedSubjectId, selectedFacultyId]);
 
     const loadData = async () => {
         try {
@@ -153,17 +176,11 @@ const FacultyMapping = () => {
             (!s.batch_id || s.batch_id === selectedClass.batch_id);
     });
 
-    // 3. Filter Faculties based on Dept
-    const availableFaculties = faculties.filter(f => {
-        // If Dept selected, filter by it
-        if (selectedDeptId) return f.department_id === selectedDeptId;
-        // Fallback to Class/Subject dept logic if simplified
-        if (selectedClassId) {
-            const cls = classes.find(c => c.id === selectedClassId);
-            return cls ? f.department_id === cls.department_id : true;
-        }
-        return true;
-    });
+    // 3. ALL faculty are available cross-department — a faculty can teach
+    //    subjects in any department. Sort by name for easy lookup.
+    const availableFaculties = [...faculties].sort((a, b) =>
+        (a.name || '').localeCompare(b.name || '')
+    );
 
 
     // --- Filtering Logic for Table (Search) ---
@@ -205,7 +222,7 @@ const FacultyMapping = () => {
 
             {/* Top Section: Mapping Form */}
             <div className="bg-white rounded-xl shadow-lg p-6 border border-slate-100">
-                <div className="grid grid-cols-1 md:grid-cols-6 gap-4 items-end">
+                <div className="grid grid-cols-1 md:grid-cols-7 gap-4 items-end">
 
                     {/* Batch Select */}
                     <div>
@@ -279,18 +296,22 @@ const FacultyMapping = () => {
                         </select>
                     </div>
 
-                    {/* Faculty Select */}
+                    {/* Faculty Select — shows ALL faculty across all departments */}
                     <div>
-                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Faculty</label>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
+                            Faculty
+                            <span className="ml-1 text-blue-400 normal-case font-normal">(any dept)</span>
+                        </label>
                         <select
                             className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-slate-50"
                             value={selectedFacultyId}
                             onChange={(e) => setSelectedFacultyId(e.target.value)}
-                            disabled={!selectedClassId && !selectedDeptId}
                         >
                             <option value="">Select Faculty</option>
                             {availableFaculties.map(f => (
-                                <option key={f.id} value={f.id}>{f.name}</option>
+                                <option key={f.id} value={f.id}>
+                                    {f.name}{f.department_id ? ` (${getDepartmentName(f.department_id)})` : ''}
+                                </option>
                             ))}
                         </select>
                     </div>
@@ -306,6 +327,21 @@ const FacultyMapping = () => {
                             {saving ? '...' : 'MAP'}
                         </button>
                     </div>
+
+                    {/* CSV Upload Button */}
+                    <div>
+                        <CsvUploader
+                            type="mappings"
+                            onSuccess={loadData}
+                            className="w-full px-4 py-2 bg-slate-400 text-white font-bold rounded-lg hover:bg-slate-500 shadow-lg transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer"
+                            style={{ backgroundColor: '#94a3b8', height: '40px' }}
+                        />
+                    </div>
+                </div>
+                
+                {/* CSV Format Helper Hint */}
+                <div className="mt-3 text-xs text-slate-400 text-right">
+                    CSV format: <code className="bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100">subject_code, class_name, class_section, faculty_email</code>
                 </div>
             </div>
 
@@ -313,6 +349,8 @@ const FacultyMapping = () => {
             <div className="bg-white rounded-xl shadow-lg border border-slate-100">
                 <div className="p-6 border-b border-slate-100 flex justify-between items-center">
                     <h2 className="text-lg font-bold text-slate-700">Global Faculty Mapping Overview</h2>
+
+                    {/* Search */}
                     <div className="relative w-64">
                         <input
                             type="text"

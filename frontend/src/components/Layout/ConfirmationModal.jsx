@@ -1,11 +1,12 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 
 const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message }) => {
     if (!isOpen) return null;
 
-    return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 backdrop-blur-sm transition-opacity">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6 transform transition-all scale-100">
+    return createPortal(
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm transition-opacity">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 mx-4 transform transition-all scale-100 border border-slate-100">
                 <div className="mb-4">
                     <h3 className="text-xl font-bold text-gray-900">{title}</h3>
                     <p className="text-gray-500 mt-2 text-sm leading-relaxed">{message}</p>
@@ -28,7 +29,8 @@ const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message }) => {
                     </button>
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body
     );
 };
 

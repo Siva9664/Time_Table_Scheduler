@@ -42,9 +42,13 @@ const Toast = ({ message, type = 'info', onClose, duration = 3000 }) => {
         ),
     };
 
+    const positionClass = type === 'error'
+        ? 'fixed top-5 left-1/2 transform -translate-x-1/2 z-50 animate-fade-in-down'
+        : 'fixed top-5 right-5 z-50 animate-fade-in-down';
+
     return (
-        <div className="fixed top-5 right-5 z-50 animate-fade-in-down">
-            <div className={`${bgColors[type] || bgColors.info} text-white px-6 py-4 rounded-lg shadow-xl flex items-center space-x-3 min-w-[300px]`}>
+        <div className={positionClass}>
+            <div className={`${bgColors[type] || bgColors.info} text-white px-6 py-4 rounded-lg shadow-xl flex items-center space-x-3 min-w-[320px] max-w-md whitespace-pre-line`}>
                 <div className="flex-shrink-0">{icons[type] || icons.info}</div>
                 <div className="flex-1 text-sm font-medium">{message}</div>
                 <button onClick={onClose} className="text-white/80 hover:text-white focus:outline-none transition-colors ml-4">

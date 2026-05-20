@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { departmentAPI } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
+import { useFormCache } from '../../hooks/useFormCache';
 import ConfirmationModal from '../Layout/ConfirmationModal';
 import { Edit, Trash2, Plus } from 'lucide-react';
 import CsvUploader from '../Layout/CsvUploader';
@@ -11,8 +12,14 @@ export default function DepartmentManager() {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editData, setEditData] = useState(null);
-  const { register, handleSubmit, reset, setValue, formState: { errors } } = useForm();
+  const { register, handleSubmit, reset, setValue, watch, formState: { errors } } = useForm();
   const { showToast } = useToast();
+  
+  // Get form values for caching
+  const formValues = watch();
+  
+  // Use form cache hook
+  const { clearCache } = useFormCache('departmentFormCache', formValues, setValue, showForm, !!editData);
 
   // Confirmation Modal State
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -54,6 +61,7 @@ export default function DepartmentManager() {
       reset();
       setEditData(null);
       setShowForm(false);
+      clearCache();
       loadDepartments();
     } catch (error) {
       showToast(error.response?.data?.detail || 'Failed to save department', 'error');

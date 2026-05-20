@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { batchAPI } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
+import { useFormCache } from '../../hooks/useFormCache';
 import ConfirmationModal from '../Layout/ConfirmationModal';
 import { Edit, Trash2, Plus } from 'lucide-react';
 
@@ -9,16 +10,22 @@ export default function BatchManager() {
     const [batches, setBatches] = useState([]);
     const [showForm, setShowForm] = useState(false);
     const [editData, setEditData] = useState(null);
-    const { register, handleSubmit, reset, setValue } = useForm();
+    const { register, handleSubmit, reset, setValue, watch } = useForm();
     const { showToast } = useToast();
 
     // Modal State
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
     const [batchToDelete, setBatchToDelete] = useState(null);
 
-    useEffect(() => { loadBatches(); }, []);
+    // Watch all form fields for caching
+    const formValues = watch();
+    
+    // Use form cache hook
+    const { clearCache } = useFormCache('batchFormCache', formValues, setValue, showForm, !!editData);
 
-    const loadBatches = async () => {
+    useEffect(() => { 
+        loadBatches();
+    }, []);
         try {
             const res = await batchAPI.getAll();
             setBatches(res.data);
@@ -81,6 +88,7 @@ export default function BatchManager() {
             reset();
             setEditData(null);
             setShowForm(false);
+            clearCache();
             loadBatches();
         } catch (error) {
             showToast("Failed to save batch: " + error.message, "error");
@@ -118,7 +126,6 @@ export default function BatchManager() {
                 <button
                     onClick={() => {
                         setEditData(null);
-                        reset();
                         setShowForm(!showForm);
                     }}
                     className="btn btn-primary flex items-center gap-2"
@@ -152,7 +159,17 @@ export default function BatchManager() {
                         </div>
 
                         <div className="flex justify-end gap-2">
-                            <button type="button" onClick={() => setShowForm(false)} className="btn btn-secondary">Cancel</button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setShowForm(false);
+                                    setEditData(null);
+                                    reset();
+                                }}
+                                className="btn btn-secondary"
+                            >
+                                Cancel
+                            </button>
                             <button type="submit" className="btn btn-primary py-2 bg-blue-600 text-white rounded hover:bg-blue-700">{editData ? 'Update Configuration' : 'Create Configuration'}</button>
                         </div>
                     </form>
