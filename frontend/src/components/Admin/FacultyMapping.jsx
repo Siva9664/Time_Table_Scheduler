@@ -145,7 +145,11 @@ const FacultyMapping = () => {
         const selectedClass = classes.find(c => c.id === selectedClassId);
         if (!selectedClass) return false;
 
-        return s.department_id === selectedClass.department_id &&
+        const subjectDeptIds = s.department_ids && s.department_ids.length > 0
+            ? s.department_ids
+            : s.department_id ? [s.department_id] : [];
+
+        return subjectDeptIds.includes(selectedClass.department_id) &&
             (!s.batch_id || s.batch_id === selectedClass.batch_id);
     });
 
@@ -163,9 +167,16 @@ const FacultyMapping = () => {
 
 
     // --- Filtering Logic for Table (Search) ---
+    const getSubjectDepartmentNames = (sub) => {
+        const ids = sub.department_ids && sub.department_ids.length > 0
+            ? sub.department_ids
+            : sub.department_id ? [sub.department_id] : [];
+        return ids.map(getDepartmentName).filter(Boolean).join(', ');
+    };
+
     const filteredOverview = subjects.filter(sub => {
         const term = searchTerm.toLowerCase();
-        const deptName = getDepartmentName(sub.department_id).toLowerCase();
+        const deptName = getSubjectDepartmentNames(sub).toLowerCase();
         const facName = sub.faculty_id ? getFacultyName(sub.faculty_id).toLowerCase() : '';
         const clsName = sub.class_id ? getClassName(sub.class_id).toLowerCase() : '';
 
@@ -330,7 +341,7 @@ const FacultyMapping = () => {
                             {filteredOverview.map(sub => (
                                 <tr key={sub.id} className="hover:bg-slate-50/50 transition-colors duration-150">
                                     <td className="px-6 py-4 text-sm font-medium text-slate-600">
-                                        {getDepartmentName(sub.department_id)}
+                                        {getSubjectDepartmentNames(sub) || '-'}
                                     </td>
                                     <td className="px-6 py-4 font-medium text-slate-700">
                                         {getClassName(sub.class_id)}

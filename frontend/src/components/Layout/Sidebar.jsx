@@ -24,7 +24,6 @@ const Icons = {
     Classes: GraduationCap,
     Subjects: BookOpen,
     Faculty: Users,
-    Rooms: DoorOpen,
     Mapping: GitMerge,
     Generate: Cpu,
     Timetables: Table,
@@ -89,7 +88,6 @@ export default function Sidebar() {
                         <NavItem to="/classes" label="Classes" icon={Icons.Classes} />
                         <NavItem to="/subjects" label="Subjects" icon={Icons.Subjects} />
                         <NavItem to="/faculty" label="Faculty" icon={Icons.Faculty} />
-                        <NavItem to="/rooms" label="Rooms" icon={Icons.Rooms} />
                         <NavItem to="/mapping" label="Mapping" icon={Icons.Mapping} />
                         
                         <div className="h-px bg-slate-800 my-4 mx-4" />

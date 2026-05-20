@@ -100,7 +100,6 @@ export default function TimetableGenerator() {
         <h3 className="text-lg font-semibold text-blue-900 mb-2">💡 Tips</h3>
         <ul className="list-disc list-inside space-y-2 text-blue-800 text-sm">
           <li>Ensure all departments have classes, subjects, faculty</li>
-          <li>Configure rooms with proper capacity</li>
           <li>Solver finds optimal schedule within constraints</li>
           <li>Generation may take 1-5 minutes</li>
         </ul>

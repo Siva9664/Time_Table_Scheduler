@@ -5,7 +5,6 @@ import DepartmentManager from './components/Admin/DepartmentManager';
 import ClassManager from './components/Admin/ClassManager';
 import SubjectManager from './components/Admin/SubjectManager';
 import FacultyManager from './components/Admin/FacultyManager';
-import RoomManager from './components/Admin/RoomManager';
 import BatchManager from './components/Admin/BatchManager';
 import FacultyMapping from './components/Admin/FacultyMapping';
 import TimetableGenerator from './components/Timetable/TimetableGenerator';
@@ -41,7 +40,6 @@ function App() {
             <Route path="classes" element={<ClassManager />} />
             <Route path="subjects" element={<SubjectManager />} />
             <Route path="faculty" element={<FacultyManager />} />
-            <Route path="rooms" element={<RoomManager />} />
             <Route path="mapping" element={<FacultyMapping />} />
             <Route path="generate" element={<TimetableGenerator />} />
             <Route path="view" element={<TimetableView />} />

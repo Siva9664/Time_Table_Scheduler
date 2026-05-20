@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { departmentAPI, classAPI, facultyAPI, roomAPI, timetableAPI } from '../../services/api';
+import { departmentAPI, classAPI, facultyAPI, timetableAPI } from '../../services/api';
 import { isAdmin, getUser } from '../../utils/auth';
 import {
   Users,
@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 
 export default function Dashboard() {
-  const [stats, setStats] = useState({ departments: 0, classes: 0, faculty: 0, rooms: 0, timetables: 0 });
+  const [stats, setStats] = useState({ departments: 0, classes: 0, faculty: 0, timetables: 0 });
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
   const admin = isAdmin();
@@ -29,16 +29,15 @@ export default function Dashboard() {
   const loadStats = async () => {
     try {
       const results = await Promise.allSettled([
-        departmentAPI.getAll(), classAPI.getAll(), facultyAPI.getAll(), roomAPI.getAll(), timetableAPI.getAll()
+        departmentAPI.getAll(), classAPI.getAll(), facultyAPI.getAll(), timetableAPI.getAll()
       ]);
 
-      const [dRes, cRes, fRes, rRes, tRes] = results;
+      const [dRes, cRes, fRes, tRes] = results;
 
       setStats({
         departments: dRes.status === 'fulfilled' ? dRes.value.data.length : 0,
         classes: cRes.status === 'fulfilled' ? cRes.value.data.length : 0,
         faculty: fRes.status === 'fulfilled' ? fRes.value.data.length : 0,
-        rooms: rRes.status === 'fulfilled' ? rRes.value.data.length : 0,
         timetables: tRes.status === 'fulfilled' ? tRes.value.data.length : 0
       });
     } catch (error) {
@@ -162,7 +161,7 @@ export default function Dashboard() {
               {[
                 { action: "Generated timetable for Spring 2024", time: "2 hours ago", type: "system" },
                 { action: "Added 5 new faculty members to CSE Dept", time: "5 hours ago", type: "modify" },
-                { action: "Updated room capacity for Lab 102", time: "1 day ago", type: "modify" }
+                { action: "System maintenance completed", time: "1 day ago", type: "modify" }
               ].map((item, idx) => (
                 <div key={idx} className="flex items-center justify-between p-4 rounded-2xl bg-slate-50 border border-slate-100 hover:bg-slate-100 transition-colors cursor-default">
                   <div className="flex items-center gap-4">

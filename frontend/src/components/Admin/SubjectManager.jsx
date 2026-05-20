@@ -4,6 +4,7 @@ import { subjectAPI, departmentAPI, batchAPI, facultyAPI, classAPI } from '../..
 import { useToast } from '../../context/ToastContext';
 import ConfirmationModal from '../Layout/ConfirmationModal';
 import { Edit, Trash2, Plus } from 'lucide-react';
+import CsvUploader from '../Layout/CsvUploader';
 
 export default function SubjectManager() {
   const [subjects, setSubjects] = useState([]);
@@ -42,7 +43,7 @@ export default function SubjectManager() {
     setEditData(sub);
     setValue('name', sub.name);
     setValue('code', sub.code);
-    setValue('department_id', sub.department_id);
+    setValue('department_ids', sub.department_ids && sub.department_ids.length > 0 ? sub.department_ids : (sub.department_id ? [sub.department_id] : []));
     setValue('batch_id', sub.batch_id);
     setValue('hours_per_week', sub.hours_per_week);
     setValue('requires_lab', sub.requires_lab ? 'true' : 'false');
@@ -51,9 +52,13 @@ export default function SubjectManager() {
 
   const onSubmit = async (data) => {
     try {
+      const department_ids = Array.isArray(data.department_ids)
+        ? data.department_ids.filter(Boolean)
+        : data.department_ids ? [data.department_ids] : [];
       const payload = {
         ...data,
-        department_id: data.department_id || null,
+        department_ids,
+        department_id: department_ids.length > 0 ? department_ids[0] : null,
         batch_id: data.batch_id || null,
         faculty_id: null,
         hours_per_week: parseInt(data.hours_per_week),
@@ -105,16 +110,19 @@ export default function SubjectManager() {
 
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">Subjects</h1>
-        <button
-          onClick={() => {
-            setEditData(null);
-            reset();
-            setShowForm(!showForm);
-          }}
-          className="btn btn-primary flex items-center gap-2"
-        >
-          {showForm ? 'Cancel' : <><Plus size={20} /> Add Subject</>}
-        </button>
+        <div className="flex items-center">
+          <button
+            onClick={() => {
+              setEditData(null);
+              reset();
+              setShowForm(!showForm);
+            }}
+            className="btn btn-primary flex items-center gap-2"
+          >
+            {showForm ? 'Cancel' : <><Plus size={20} /> Add Subject</>}
+          </button>
+          <CsvUploader type="subjects" />
+        </div>
       </div>
 
       {showForm && (
@@ -123,8 +131,16 @@ export default function SubjectManager() {
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
             <div><label className="block text-sm font-medium mb-2">Name *</label><input {...register('name', { required: true })} className="input" /></div>
             <div><label className="block text-sm font-medium mb-2">Code *</label><input {...register('code', { required: true })} className="input" /></div>
-            <div><label className="block text-sm font-medium mb-2">Department *</label><select {...register('department_id', { required: true })} className="input"><option value="">Select</option>{departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></div>
-            <div><label className="block text-sm font-medium mb-2">Batch *</label><select {...register('batch_id', { required: true })} className="input"><option value="">Select</option>{batches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+            <div>
+              <label className="block text-sm font-medium mb-2">Departments *</label>
+              <select {...register('department_ids', { required: true })} multiple size={4} className="input h-32">
+                {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">Batch *</label>
+              <select {...register('batch_id', { required: true })} className="input"><option value="">Select</option>{batches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
+            </div>
             <div><label className="block text-sm font-medium mb-2">Hours/Week *</label><input {...register('hours_per_week', { required: true })} type="number" className="input" /></div>
             <div><label className="block text-sm font-medium mb-2">Lab?</label><select {...register('requires_lab')} className="input"><option value="false">No</option><option value="true">Yes</option></select></div>
             <div className="flex justify-end gap-2">
@@ -163,7 +179,9 @@ export default function SubjectManager() {
 
               <h3 className="text-xl font-bold pr-16">{sub.name}</h3>
               <p>Code: {sub.code}</p>
-              <p className="text-sm text-gray-600">Dept: {departments.find(d => d.id === sub.department_id)?.name}</p>
+              <p className="text-sm text-gray-600">
+                Departments: {sub.department_ids && sub.department_ids.length > 0 ? sub.department_ids.map(id => departments.find(d => d.id === id)?.name || id).filter(Boolean).join(', ') : departments.find(d => d.id === sub.department_id)?.name}
+              </p>
               <p className="text-sm text-gray-600">Batch: {batches.find(b => b.id === sub.batch_id)?.name}</p>
               <p>Hours/Week: {sub.hours_per_week}</p>
               <p>Lab: {sub.requires_lab ? 'Yes' : 'No'}</p>

@@ -6,7 +6,7 @@ import ConfirmationModal from '../Layout/ConfirmationModal';
 export default function TimetableView() {
   const [timetables, setTimetables] = useState([]);
   const [selected, setSelected] = useState(null);
-  const [activeTab, setActiveTab] = useState('classes'); // 'classes', 'faculty', 'rooms'
+  const [activeTab, setActiveTab] = useState('classes'); // 'classes' or 'faculty'
   const { showToast } = useToast();
 
   // Modal State
@@ -68,8 +68,7 @@ export default function TimetableView() {
 
             facultyMap[slot.faculty][day].push({
               ...slot,
-              class_name: classData.class_name,
-              room: slot.room
+              class_name: classData.class_name
             });
           }
         });
@@ -78,28 +77,6 @@ export default function TimetableView() {
     return facultyMap;
   };
 
-  const getRoomSchedule = (scheduleData) => {
-    const roomMap = {};
-    if (!scheduleData) return {};
-
-    Object.values(scheduleData).forEach(classData => {
-      Object.entries(classData.timetable).forEach(([day, periods]) => {
-        periods.forEach(slot => {
-          if (slot.room) {
-            if (!roomMap[slot.room]) roomMap[slot.room] = {};
-            if (!roomMap[slot.room][day]) roomMap[slot.room][day] = [];
-
-            roomMap[slot.room][day].push({
-              ...slot,
-              class_name: classData.class_name,
-              faculty: slot.faculty
-            });
-          }
-        });
-      });
-    });
-    return roomMap;
-  };
 
   // --- RENDERERS ---
 
@@ -140,7 +117,6 @@ export default function TimetableView() {
                             </div>
                             <div className="mt-2 pt-2 border-t border-black/5 flex justify-between items-center">
                               <span className="text-xs font-medium">👤 {slot.faculty}</span>
-                              <span className="text-xs bg-white/50 px-1.5 rounded">📍 {slot.room}</span>
                             </div>
                           </div>
                         ) : (
@@ -191,7 +167,7 @@ export default function TimetableView() {
                               {slot.subject}
                             </div>
                             <div className="text-xs text-gray-500 mt-1">
-                              {type === 'faculty' ? `📍 ${slot.room}` : `👤 ${slot.faculty}`}
+                              👤 {slot.faculty}
                             </div>
                           </div>
                         ))}
@@ -274,7 +250,7 @@ export default function TimetableView() {
 
               {/* TABS */}
               <div className="flex bg-gray-200/50 p-1 rounded-lg">
-                {['classes', 'faculty', 'rooms'].map((tab) => (
+                {['classes', 'faculty'].map((tab) => (
                   <button
                     key={tab}
                     onClick={() => setActiveTab(tab)}
@@ -292,7 +268,6 @@ export default function TimetableView() {
             <div className="p-6 bg-gray-50/30 min-h-[600px]">
               {activeTab === 'classes' && renderClassView()}
               {activeTab === 'faculty' && renderResourceView(getFacultySchedule(selected.schedule_data), 'faculty')}
-              {activeTab === 'rooms' && renderResourceView(getRoomSchedule(selected.schedule_data), 'room')}
             </div>
           </div>
         </div>

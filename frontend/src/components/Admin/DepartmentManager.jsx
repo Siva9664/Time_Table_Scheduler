@@ -4,6 +4,7 @@ import { departmentAPI } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
 import ConfirmationModal from '../Layout/ConfirmationModal';
 import { Edit, Trash2, Plus } from 'lucide-react';
+import CsvUploader from '../Layout/CsvUploader';
 
 export default function DepartmentManager() {
   const [departments, setDepartments] = useState([]);
@@ -87,16 +88,19 @@ export default function DepartmentManager() {
 
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-3xl font-bold">Departments</h1>
-        <button
-          onClick={() => {
-            setEditData(null);
-            reset();
-            setShowForm(!showForm);
-          }}
-          className="btn btn-primary flex items-center gap-2"
-        >
-          {showForm ? 'Cancel' : <><Plus size={20} /> Add Department</>}
-        </button>
+        <div className="flex items-center">
+          <button
+            onClick={() => {
+              setEditData(null);
+              reset();
+              setShowForm(!showForm);
+            }}
+            className="btn btn-primary flex items-center gap-2"
+          >
+            {showForm ? 'Cancel' : <><Plus size={20} /> Add Department</>}
+          </button>
+          <CsvUploader type="departments" />
+        </div>
       </div>
 
       {showForm && (

@@ -70,13 +70,6 @@ export const facultyAPI = {
   delete: (id) => api.delete(`/faculty/${id}`)
 };
 
-export const roomAPI = {
-  getAll: () => api.get('/rooms'),
-  create: (data) => api.post('/rooms', data),
-  update: (id, data) => api.put(`/rooms/${id}`, data),
-  delete: (id) => api.delete(`/rooms/${id}`)
-};
-
 export const timetableAPI = {
   generate: (data) => api.post('/generate', data),
   getAll: () => api.get('/timetables'),

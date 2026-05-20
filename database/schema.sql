@@ -105,29 +105,6 @@ CREATE TABLE subjects (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ================================================
--- TABLE: rooms
--- ================================================
-CREATE TABLE rooms (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    name VARCHAR(100) UNIQUE NOT NULL,
-    room_number VARCHAR(50),
-    room_type ENUM('classroom', 'lab', 'auditorium', 'seminar_hall') DEFAULT 'classroom',
-    capacity INT NOT NULL,
-    building VARCHAR(100),
-    floor INT,
-    has_projector BOOLEAN DEFAULT FALSE,
-    has_computers BOOLEAN DEFAULT FALSE,
-    has_ac BOOLEAN DEFAULT FALSE,
-    has_audio_system BOOLEAN DEFAULT FALSE,
-    is_available BOOLEAN DEFAULT TRUE,
-    unavailable_slots JSON,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_room_type (room_type),
-    INDEX idx_capacity (capacity)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- ================================================
 -- TABLE: time_slots
 -- ================================================
 CREATE TABLE time_slots (
@@ -180,7 +157,6 @@ CREATE TABLE timetable_entries (
     class_id INT NOT NULL,
     subject_id INT NOT NULL,
     faculty_id INT NOT NULL,
-    room_id INT NOT NULL,
     time_slot_id INT NOT NULL,
     entry_type ENUM('lecture', 'lab', 'tutorial') DEFAULT 'lecture',
     is_locked BOOLEAN DEFAULT FALSE,
@@ -190,14 +166,12 @@ CREATE TABLE timetable_entries (
     FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE,
     FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
     FOREIGN KEY (faculty_id) REFERENCES faculty(id) ON DELETE CASCADE,
-    FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE,
     FOREIGN KEY (time_slot_id) REFERENCES time_slots(id) ON DELETE CASCADE,
     INDEX idx_timetable (timetable_id),
     INDEX idx_class (class_id),
     INDEX idx_faculty (faculty_id),
-    INDEX idx_room (room_id),
     INDEX idx_timeslot (time_slot_id),
-    UNIQUE KEY unique_slot (timetable_id, time_slot_id, room_id)
+    UNIQUE KEY unique_slot (timetable_id, time_slot_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ================================================
@@ -258,10 +232,8 @@ SELECT 'Friday', start_time, end_time, slot_name, slot_order, is_break FROM time
 -- Default constraints
 INSERT INTO constraints (constraint_type, constraint_name, description, is_active, priority) VALUES
 ('hard', 'No Faculty Overlap', 'A faculty member cannot teach in multiple classes at the same time', TRUE, 10),
-('hard', 'No Room Overlap', 'A room cannot be assigned to multiple classes at the same time', TRUE, 10),
 ('hard', 'No Class Overlap', 'A class cannot have multiple subjects at the same time', TRUE, 10),
 ('hard', 'Faculty Availability', 'Respect faculty unavailable time slots', TRUE, 9),
-('hard', 'Room Capacity', 'Room capacity must accommodate class size', TRUE, 8),
 ('soft', 'Balanced Daily Load', 'Distribute subject hours evenly across days', TRUE, 5),
 ('soft', 'Faculty Preferences', 'Try to honor faculty time preferences', TRUE, 4),
 ('soft', 'Minimize Gaps', 'Minimize free periods between classes', TRUE, 6),
