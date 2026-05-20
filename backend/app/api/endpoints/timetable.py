@@ -6,7 +6,7 @@ from datetime import datetime
 from ...database.database import get_db
 from ...models.timetable import (
     department_helper, batch_helper, class_helper,
-    subject_helper, faculty_helper, room_helper, timetable_helper
+    subject_helper, faculty_helper, timetable_helper
 )
 from ...schemas.timetable import *
 from ...core.security import get_current_user, get_admin_user, get_tenant_db
@@ -131,6 +131,10 @@ def _enrich_subject(doc: dict, db: Database) -> dict:
 @router.post("/subjects", response_model=SubjectResponse)
 def create_subject(subj: SubjectCreate, db: Database = Depends(get_tenant_db), current_user: dict = Depends(get_admin_user)):
     doc = {**subj.dict(), "created_at": datetime.utcnow()}
+    if doc.get("department_ids") and not doc.get("department_id"):
+        doc["department_id"] = doc["department_ids"][0]
+    if doc.get("department_id") and not doc.get("department_ids"):
+        doc["department_ids"] = [doc["department_id"]]
     result = db["subjects"].insert_one(doc)
     return _enrich_subject(db["subjects"].find_one({"_id": result.inserted_id}), db)
 
@@ -142,6 +146,11 @@ def list_subjects(class_id: Optional[str] = None, db: Database = Depends(get_ten
 @router.put("/subjects/{id}", response_model=SubjectResponse)
 def update_subject(id: str, subj: SubjectUpdate, db: Database = Depends(get_tenant_db), current_user: dict = Depends(get_admin_user)):
     update_data = {k: v for k, v in subj.dict(exclude_unset=True).items()}
+    if update_data.get("department_ids") and not update_data.get("department_id"):
+        department_ids = update_data["department_ids"]
+        update_data["department_id"] = department_ids[0] if department_ids else None
+    if update_data.get("department_id") and not update_data.get("department_ids"):
+        update_data["department_ids"] = [update_data["department_id"]]
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
     result = db["subjects"].update_one({"_id": _oid(id)}, {"$set": update_data})
@@ -186,34 +195,6 @@ def update_faculty(id: str, fac: FacultyUpdate, db: Database = Depends(get_tenan
         raise HTTPException(status_code=404, detail="Not found")
     return faculty_helper(db["faculty"].find_one({"_id": _oid(id)}))
 
-# ── Rooms ─────────────────────────────────────────────────────────────────────
-
-@router.post("/rooms", response_model=RoomResponse)
-def create_room(room: RoomCreate, db: Database = Depends(get_tenant_db), current_user: dict = Depends(get_admin_user)):
-    doc = {**room.dict(), "created_at": datetime.utcnow()}
-    result = db["rooms"].insert_one(doc)
-    return room_helper(db["rooms"].find_one({"_id": result.inserted_id}))
-
-@router.get("/rooms", response_model=List[RoomResponse])
-def list_rooms(db: Database = Depends(get_tenant_db), current_user: dict = Depends(get_current_user)):
-    return [room_helper(d) for d in db["rooms"].find()]
-
-@router.delete("/rooms/{id}")
-def delete_room(id: str, db: Database = Depends(get_tenant_db), current_user: dict = Depends(get_admin_user)):
-    result = db["rooms"].delete_one({"_id": _oid(id)})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Not found")
-    return {"message": "Deleted"}
-
-@router.put("/rooms/{id}", response_model=RoomResponse)
-def update_room(id: str, room: RoomUpdate, db: Database = Depends(get_tenant_db), current_user: dict = Depends(get_admin_user)):
-    update_data = {k: v for k, v in room.dict(exclude_unset=True).items()}
-    if not update_data:
-        raise HTTPException(status_code=400, detail="No fields to update")
-    result = db["rooms"].update_one({"_id": _oid(id)}, {"$set": update_data})
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Not found")
-    return room_helper(db["rooms"].find_one({"_id": _oid(id)}))
 
 # ── Timetable Generation ──────────────────────────────────────────────────────
 
@@ -223,9 +204,10 @@ def generate_timetable(request: TimetableGenerateRequest, db: Database = Depends
     if request.constraints_text:
         try:
             parser = AIConstraintParser(
-                base_url=settings.OLLAMA_BASE_URL,
-                model=settings.OLLAMA_MODEL,
-                timeout_seconds=settings.OLLAMA_TIMEOUT_SECONDS,
+                model=settings.AI_MODEL,
+                timeout_seconds=settings.OPENAI_TIMEOUT_SECONDS,
+                api_key=settings.OPENAI_API_KEY,
+                api_base=settings.OPENAI_API_BASE,
             )
             custom_constraints = parser.parse_constraints(request.constraints_text)
             print(f"Parsed Constraints: {custom_constraints}")

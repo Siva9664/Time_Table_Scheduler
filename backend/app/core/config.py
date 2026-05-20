@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings
-from typing import List
+from typing import List, Optional
 
 class Settings(BaseSettings):
     MONGODB_URL: str = "mongodb://localhost:27017"
@@ -9,9 +9,10 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 4320 # 3 days
     ALLOWED_ORIGINS: str = "http://localhost:3002,http://localhost:3000,http://localhost:3003,http://localhost:5173"
     SOLVER_TIME_LIMIT_SECONDS: int = 60
-    OLLAMA_BASE_URL: str = "http://localhost:11434"
-    OLLAMA_MODEL: str = "gemma2:27b"
-    OLLAMA_TIMEOUT_SECONDS: int = 60
+    AI_MODEL: str = "grok-1"
+    OPENAI_API_KEY: Optional[str] = None
+    OPENAI_API_BASE: str = "https://api.openai.com/v1"
+    OPENAI_TIMEOUT_SECONDS: int = 60
 
     @property
     def origins_list(self) -> List[str]:

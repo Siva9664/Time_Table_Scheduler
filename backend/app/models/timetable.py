@@ -40,6 +40,10 @@ def class_helper(doc: dict, department: dict = None, batch: dict = None) -> dict
 
 
 def subject_helper(doc: dict, assigned_class: dict = None) -> dict:
+    department_ids = doc.get("department_ids")
+    if department_ids is None and doc.get("department_id"):
+        department_ids = [doc.get("department_id")]
+
     return {
         "id": str(doc["_id"]),
         "name": doc.get("name", ""),
@@ -47,6 +51,7 @@ def subject_helper(doc: dict, assigned_class: dict = None) -> dict:
         "hours_per_week": doc.get("hours_per_week", 0),
         "requires_lab": doc.get("requires_lab", False),
         "department_id": doc.get("department_id"),
+        "department_ids": department_ids or [],
         "batch_id": doc.get("batch_id"),
         "class_id": doc.get("class_id"),
         "faculty_id": doc.get("faculty_id"),
@@ -66,17 +71,6 @@ def faculty_helper(doc: dict) -> dict:
         "created_at": doc.get("created_at", datetime.utcnow()),
     }
 
-
-def room_helper(doc: dict) -> dict:
-    return {
-        "id": str(doc["_id"]),
-        "name": doc.get("name", ""),
-        "room_type": doc.get("room_type", ""),
-        "capacity": doc.get("capacity", 0),
-        "has_projector": doc.get("has_projector", False),
-        "has_computers": doc.get("has_computers", False),
-        "created_at": doc.get("created_at", datetime.utcnow()),
-    }
 
 
 def timetable_helper(doc: dict) -> dict:

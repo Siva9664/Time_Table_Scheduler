@@ -9,3 +9,4 @@ pydantic-settings
 ortools
 python-dotenv==1.0.0
 email-validator
+openai

@@ -40,17 +40,15 @@ class TimetableScheduler:
         self.classes = []
         self.subjects = []
         self.faculty = []
-        self.rooms = []
 
         # OR-Tools
         self.model = cp_model.CpModel()
         self.model = cp_model.CpModel()
-        self.variables = {}  # Map: "s{subject_id}_d{day_index}_p{period_index}_r{room_id}" -> BoolVar
+        self.variables = {}  # Map: "s{subject_id}_d{day_index}_p{period_index}" -> BoolVar
 
         # Optimization Caches
-        self.vars_by_room = {}    # room_id -> day -> list of {'start', 'end', 'var', 'period'}
-        self.vars_by_faculty = {}  # faculty_id -> day -> list of {'start', 'end', 'var'}
-        self.vars_by_subject_room = {}  # (subject_id, room_id) -> list of vars
+        self.vars_by_faculty = {}  # faculty_id -> day -> list of {'start', 'end', 'var', 'period'}
+        self.vars_by_subject = {}  # subject_id -> list of BoolVar
 
     def _wrap(self, doc: dict) -> _Obj:
         return _Obj(doc)
@@ -118,13 +116,12 @@ class TimetableScheduler:
             fac_query = {}
         self.faculty = [self._wrap(d) for d in self.db["faculty"].find(fac_query)]
 
-        # Rooms
-        self.rooms = [self._wrap(d) for d in self.db["rooms"].find()]
+        # Legacy assignment support is disabled.
 
         summary = {
             "departments": len(self.departments), "batches": len(self.batches),
             "classes": len(self.classes), "subjects": len(self.subjects),
-            "faculty": len(self.faculty), "rooms": len(self.rooms)
+            "faculty": len(self.faculty)
         }
         logger.info(f"Data Loaded: {summary}")
         return summary
@@ -183,6 +180,19 @@ class TimetableScheduler:
                 return True
         return False
 
+    def _find_faculty_by_name(self, target_name: str) -> Optional[_Obj]:
+        if not target_name:
+            return None
+        target_name = target_name.strip().lower()
+        tokens = [token for token in target_name.split() if token]
+        for fac in self.faculty:
+            faculty_name = str(fac.name or "").strip().lower()
+            if target_name == faculty_name or target_name in faculty_name or faculty_name in target_name:
+                return fac
+            if tokens and all(token in faculty_name for token in tokens):
+                return fac
+        return None
+
     def _get_class_period_intervals(self, class_obj: _Obj) -> List[Tuple[int, int]]:
         """
         Returns a list of (start_minute, end_minute) for each period of the day for this class.
@@ -227,15 +237,14 @@ class TimetableScheduler:
         return intervals
 
     def create_variables(self):
-        """Creates boolean variables: X[subject, day, period, room]"""
+        """Creates boolean variables: X[subject, day, period]"""
         logger.info("Step 2/5: Creating decision variables...")
 
         class_timings = {c.id: self._get_class_period_intervals(c) for c in self.classes}
         faculty_map = {f.id: f for f in self.faculty}
 
-        self.vars_by_room = {r.id: {d: [] for d in range(self.num_days)} for r in self.rooms}
         self.vars_by_faculty = {f.id: {d: [] for d in range(self.num_days)} for f in self.faculty}
-        self.vars_by_subject_room = {}
+        self.vars_by_subject = {}
 
         for subject in self.subjects:
             if subject.class_id in self.class_map:
@@ -243,20 +252,6 @@ class TimetableScheduler:
                 c_intervals = class_timings.get(cls.id, [])
             else:
                 c_intervals = []
-
-            valid_rooms = []
-            for room in self.rooms:
-                if subject.requires_lab and room.room_type != 'lab':
-                    continue
-                if not subject.requires_lab and room.room_type == 'lab':
-                    continue
-                if cls.student_count and room.capacity < cls.student_count:
-                    continue
-                valid_rooms.append(room)
-                self.vars_by_subject_room[(subject.id, room.id)] = []
-
-            if not valid_rooms:
-                continue
 
             for day in range(self.num_days):
                 for period in range(self.periods_per_day):
@@ -267,20 +262,15 @@ class TimetableScheduler:
                     if faculty and self._is_faculty_unavailable(faculty, day, self.working_days[day], period, start, end):
                         continue
 
-                    for room in valid_rooms:
-                        var_name = f"s{subject.id}_d{day}_p{period}_r{room.id}"
-                        var = self.model.NewBoolVar(var_name)
-                        self.variables[var_name] = var
+                    var_name = f"s{subject.id}_d{day}_p{period}"
+                    var = self.model.NewBoolVar(var_name)
+                    self.variables[var_name] = var
 
-                        entry = {'start': start, 'end': end, 'var': var, 'period': period}
+                    entry = {'start': start, 'end': end, 'var': var, 'period': period}
+                    if subject.faculty_id in self.vars_by_faculty:
+                        self.vars_by_faculty[subject.faculty_id][day].append(entry)
 
-                        self.vars_by_room[room.id][day].append(entry)
-
-                        if subject.faculty_id:
-                            if subject.faculty_id in self.vars_by_faculty:
-                                self.vars_by_faculty[subject.faculty_id][day].append(entry)
-
-                        self.vars_by_subject_room[(subject.id, room.id)].append(var)
+                    self.vars_by_subject.setdefault(subject.id, []).append(var)
 
         logger.info(f"Total decision variables created: {len(self.variables)}")
 
@@ -289,11 +279,7 @@ class TimetableScheduler:
 
         # 1. Subject Requirements: sum(all subject vars) == hours_per_week
         for subject in self.subjects:
-            all_sub_vars = []
-            for room in self.rooms:
-                if (subject.id, room.id) in self.vars_by_subject_room:
-                    all_sub_vars.extend(self.vars_by_subject_room[(subject.id, room.id)])
-
+            all_sub_vars = self.vars_by_subject.get(subject.id, [])
             if all_sub_vars:
                 self.model.Add(sum(all_sub_vars) == subject.hours_per_week)
         logger.debug("Added Subject Requirement constraints")
@@ -305,10 +291,9 @@ class TimetableScheduler:
                 for period in range(self.periods_per_day):
                     slot_vars = []
                     for sub in class_subjects:
-                        for room in self.rooms:
-                            key = f"s{sub.id}_d{day}_p{period}_r{room.id}"
-                            if key in self.variables:
-                                slot_vars.append(self.variables[key])
+                        key = f"s{sub.id}_d{day}_p{period}"
+                        if key in self.variables:
+                            slot_vars.append(self.variables[key])
                     if slot_vars:
                         self.model.Add(sum(slot_vars) <= 1)
         logger.debug("Added Class Concurrency constraints")
@@ -343,26 +328,17 @@ class TimetableScheduler:
                             self.model.Add(g1['expr'] <= 1)
 
         add_overlap_constraints(self.vars_by_faculty, "Faculty")
-        add_overlap_constraints(self.vars_by_room, "Room")
-        logger.debug("Added Resource Conflict (Faculty/Room) constraints")
+        logger.debug("Added Resource Conflict (Faculty) constraints")
 
         # 4. DEFAULT: Labs Consecutive
         for sub in self.subjects:
             if sub.requires_lab:
                 for day in range(self.num_days):
                     period_vars = [[] for _ in range(self.periods_per_day)]
-                    found_any = False
-                    for room in self.rooms:
-                        if (sub.id, room.id) not in self.vars_by_subject_room:
-                            continue
-                        for period in range(self.periods_per_day):
-                            key = f"s{sub.id}_d{day}_p{period}_r{room.id}"
-                            if key in self.variables:
-                                period_vars[period].append(self.variables[key])
-                                found_any = True
-
-                    if not found_any:
-                        continue
+                    for period in range(self.periods_per_day):
+                        key = f"s{sub.id}_d{day}_p{period}"
+                        if key in self.variables:
+                            period_vars[period].append(self.variables[key])
 
                     all_day_vars = [v for p_list in period_vars for v in p_list]
                     if not all_day_vars:
@@ -389,31 +365,16 @@ class TimetableScheduler:
                             for j in range(i + 1, k):
                                 self.model.Add(p_present_vars[i] + p_present_vars[k] - p_present_vars[j] <= 1)
 
-        # 5. DEFAULT: Single Room per Subject
-        for sub in self.subjects:
-            room_usage_vars = []
-            for room in self.rooms:
-                if (sub.id, room.id) in self.vars_by_subject_room:
-                    vars_list = self.vars_by_subject_room[(sub.id, room.id)]
-                    if vars_list:
-                        u_var = self.model.NewBoolVar(f"use_r{room.id}_s{sub.id}")
-                        room_usage_vars.append(u_var)
-                        for v in vars_list:
-                            self.model.Add(v <= u_var)
+        logger.debug("Added Default (Lab) constraints")
 
-            if room_usage_vars:
-                self.model.Add(sum(room_usage_vars) == 1)
-
-        logger.debug("Added Default (Lab/Room) constraints")
-
-        # 6. CUSTOM CONSTRAINTS
+        # 5. CUSTOM CONSTRAINTS
         for constraint in self.custom_constraints:
             c_type = constraint.get("type")
             if c_type == "faculty_availability":
-                f_name = constraint.get("faculty_name", "").lower()
-                allowed_days = [d.lower() for d in constraint.get("available_days", [])]
+                f_name = constraint.get("faculty_name", "")
+                allowed_days = [d.lower() for d in constraint.get("available_days", []) if isinstance(d, str)]
 
-                target_fac = next((f for f in self.faculty if f_name in f.name.lower()), None)
+                target_fac = self._find_faculty_by_name(f_name)
                 if target_fac:
                     for day_idx, day_name in enumerate(self.working_days):
                         if day_name.lower() not in allowed_days:
@@ -421,6 +382,7 @@ class TimetableScheduler:
                                 entries = self.vars_by_faculty[target_fac.id][day_idx]
                                 for e in entries:
                                     self.model.Add(e['var'] == 0)
+
 
     def solve(self) -> Dict[str, Any]:
         logger.info(f"Step 4/5: Solving model (Time Limit: {self.time_limit_seconds}s)...")
@@ -475,23 +437,21 @@ class TimetableScheduler:
                     }
 
                     for sub in class_subjects:
-                        for room in self.rooms:
-                            key = f"s{sub.id}_d{day_idx}_p{p_idx}_r{room.id}"
-                            if key in self.variables and solver.Value(self.variables[key]) == 1:
-                                faculty_name = "TBA"
-                                if sub.faculty_id:
-                                    fac = next((f for f in self.faculty if f.id == sub.faculty_id), None)
-                                    if fac:
-                                        faculty_name = fac.name
+                        key = f"s{sub.id}_d{day_idx}_p{p_idx}"
+                        if key in self.variables and solver.Value(self.variables[key]) == 1:
+                            faculty_name = "TBA"
+                            if sub.faculty_id:
+                                fac = next((f for f in self.faculty if f.id == sub.faculty_id), None)
+                                if fac:
+                                    faculty_name = fac.name
 
-                                slot_info.update({
-                                    "subject": sub.name,
-                                    "subject_code": sub.code,
-                                    "faculty": faculty_name,
-                                    "room": room.name,
-                                    "is_lab": sub.requires_lab
-                                })
-                                break
+                            slot_info.update({
+                                "subject": sub.name,
+                                "subject_code": sub.code,
+                                "faculty": faculty_name,
+                                "is_lab": sub.requires_lab
+                            })
+                            break
                     day_schedule.append(slot_info)
                 class_schedule["timetable"][day_name] = day_schedule
 
