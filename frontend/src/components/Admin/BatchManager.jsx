@@ -19,13 +19,11 @@ export default function BatchManager() {
 
     // Watch all form fields for caching
     const formValues = watch();
-    
+
     // Use form cache hook
     const { clearCache } = useFormCache('batchFormCache', formValues, setValue, showForm, !!editData);
 
-    useEffect(() => { 
-        loadBatches();
-    }, []);
+    const loadBatches = async () => {
         try {
             const res = await batchAPI.getAll();
             setBatches(res.data);
@@ -34,6 +32,10 @@ export default function BatchManager() {
             showToast("Failed to load batches", "error");
         }
     };
+
+    useEffect(() => {
+        loadBatches();
+    }, []);
 
     const handleEdit = (batch) => {
         setEditData(batch);

@@ -1,4 +1,5 @@
 import json
+import re
 from typing import List, Dict, Any, Optional
 
 
@@ -39,11 +40,6 @@ class AIConstraintParser:
         self.api_base = api_base.rstrip("/")
         self.context = context or {}   # {"faculty_names": [...], "subject_names": [...], "class_names": [...]}
 
-        if not self.api_key:
-            raise ValueError("OPENAI_API_KEY is required for AI features")
-        if not self.model:
-            raise ValueError("AI_MODEL is required for AI features")
-
     # ─────────────────────────────────────────────────────────────────────────
     # Public API
     # ─────────────────────────────────────────────────────────────────────────
@@ -53,36 +49,48 @@ class AIConstraintParser:
         Converts natural language constraint text into a list of structured
         constraint dicts that the TimetableScheduler can understand.
         """
+        if not self.api_key or not self.model:
+            return self._parse_rule_based_constraints(text)
+
         system_prompt = self._build_system_prompt()
-        user_prompt = f'Convert this scheduling request into JSON constraints:\n\n"{text}"'
+        user_prompt = self._build_user_prompt(text)
 
         try:
             raw = self._chat(system_prompt, user_prompt)
-            parsed = json.loads(raw)
-            if isinstance(parsed, list):
-                return self._normalize_constraints(parsed)
-            if isinstance(parsed, dict) and isinstance(parsed.get("constraints"), list):
-                return self._normalize_constraints(parsed["constraints"])
-            if isinstance(parsed, dict):
-                return self._normalize_constraints([parsed])
-            raise ValueError("Expected a JSON array of constraints")
+            constraints = self._extract_constraints(json.loads(raw))
+            return self._merge_constraints(
+                self._normalize_constraints(constraints),
+                self._parse_rule_based_constraints(text),
+            )
         except json.JSONDecodeError as e:
             print(f"AI Parse Error (invalid JSON): {e}\nRaw response: {raw!r}")
-            return []
+            return self._parse_rule_based_constraints(text)
         except Exception as e:
             print(f"AI Parse Error: {e}")
-            return []
+            return self._parse_rule_based_constraints(text)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Prompt building
     # ─────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _build_user_prompt(text: str) -> str:
+        return f"""Convert this scheduling request into JSON constraints.
+
+Extract EVERY independent constraint from the text. Treat separate sentences, lines, bullets, and clauses joined by "and" as separate constraints when they describe different rules.
+
+Return this exact JSON shape:
+{{"constraints": [ ... ]}}
+
+Scheduling request:
+{text}"""
 
     def _build_system_prompt(self) -> str:
         faculty_list = ", ".join(self.context.get("faculty_names", [])) or "not provided"
         subject_list = ", ".join(self.context.get("subject_names", [])) or "not provided"
         class_list   = ", ".join(self.context.get("class_names",   [])) or "not provided"
 
-        return f"""You are a timetable scheduling assistant. Your only job is to convert natural language scheduling requests into a JSON array of structured constraint objects. Return ONLY valid JSON — no markdown, no explanation.
+        return f"""You are a timetable scheduling assistant. Your only job is to convert natural language scheduling requests into structured constraint objects. Return ONLY valid JSON — no markdown, no explanation.
 
 ## Available Data Context
 - Faculty names in the system: {faculty_list}
@@ -137,22 +145,23 @@ A class must have at least N free periods between two sessions.
 ## Rules
 - Always match names exactly to the available data context above (use the closest match).
 - Map all day names to full English: Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday.
+- Extract every independent constraint. Do not stop after the first sentence or first rule.
 - If "not available on X" → use faculty_unavailability.
 - If "only available on X" → use faculty_availability.
 - If "continuous" or "back to back" → use consecutive_periods.
 - If "not more than once a day" → use subject_max_per_day with max_per_day: 1.
-- Return ONLY a JSON array. No other text.
+- Return ONLY a JSON object in this shape: {{"constraints": [ ... ]}}. No other text.
 
 ## Few-Shot Examples
 
 Input: "Dr. Raj cannot teach on Fridays and Saturdays"
-Output: [{{"type": "faculty_unavailability", "faculty_name": "Dr. Raj", "unavailable_days": ["Friday", "Saturday"]}}]
+Output: {{"constraints": [{{"type": "faculty_unavailability", "faculty_name": "Dr. Raj", "unavailable_days": ["Friday", "Saturday"]}}]}}
 
 Input: "All lab sessions must be consecutive. Physics should be in the morning."
-Output: [{{"type": "consecutive_periods", "subject_type": "lab"}}, {{"type": "preferred_time_slot", "target": "Physics", "target_type": "subject", "preference": "morning"}}]
+Output: {{"constraints": [{{"type": "consecutive_periods", "subject_type": "lab"}}, {{"type": "preferred_time_slot", "target": "Physics", "target_type": "subject", "preference": "morning"}}]}}
 
 Input: "Prof. Meena is available only on Monday, Tuesday and Thursday. Maths should not appear more than once a day."
-Output: [{{"type": "faculty_availability", "faculty_name": "Prof. Meena", "available_days": ["Monday", "Tuesday", "Thursday"]}}, {{"type": "subject_max_per_day", "subject_name": "Maths", "max_per_day": 1}}]
+Output: {{"constraints": [{{"type": "faculty_availability", "faculty_name": "Prof. Meena", "available_days": ["Monday", "Tuesday", "Thursday"]}}, {{"type": "subject_max_per_day", "subject_name": "Maths", "max_per_day": 1}}]}}
 """
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -160,6 +169,11 @@ Output: [{{"type": "faculty_availability", "faculty_name": "Prof. Meena", "avail
     # ─────────────────────────────────────────────────────────────────────────
 
     def _chat(self, system: str, user: str) -> str:
+        if not self.api_key:
+            raise RuntimeError("OPENAI_API_KEY is required for AI parsing")
+        if not self.model:
+            raise RuntimeError("AI_MODEL is required for AI parsing")
+
         from openai import OpenAI
         client = OpenAI(
             api_key=self.api_key,
@@ -199,6 +213,24 @@ Output: [{{"type": "faculty_availability", "faculty_name": "Prof. Meena", "avail
             text = text[:-3].strip()
         return text
 
+    @staticmethod
+    def _extract_constraints(parsed: Any) -> List[Dict[str, Any]]:
+        """
+        Accept the preferred {"constraints": [...]} response, plus older model
+        responses that returned a bare array or a single constraint object.
+        """
+        if isinstance(parsed, list):
+            return parsed
+        if isinstance(parsed, dict):
+            constraints = parsed.get("constraints")
+            if isinstance(constraints, list):
+                return constraints
+            if isinstance(constraints, dict):
+                return [constraints]
+            if parsed.get("type"):
+                return [parsed]
+        raise ValueError("Expected JSON object with a constraints array")
+
     # ─────────────────────────────────────────────────────────────────────────
     # Normalisation
     # ─────────────────────────────────────────────────────────────────────────
@@ -209,12 +241,14 @@ Output: [{{"type": "faculty_availability", "faculty_name": "Prof. Meena", "avail
         if not value:
             return []
         if isinstance(value, str):
-            parts = [p.strip() for p in value.replace("and", ",").replace(";", ",").split(",") if p.strip()]
+            normalized_value = value.replace("/", ",").replace("&", ",").replace("and", ",").replace(";", ",")
+            parts = [p.strip() for p in normalized_value.split(",") if p.strip()]
         elif isinstance(value, list):
             parts = []
             for item in value:
                 if isinstance(item, str):
-                    parts.extend([p.strip() for p in item.replace("and", ",").replace(";", ",").split(",") if p.strip()])
+                    normalized_item = item.replace("/", ",").replace("&", ",").replace("and", ",").replace(";", ",")
+                    parts.extend([p.strip() for p in normalized_item.split(",") if p.strip()])
         else:
             return []
 
@@ -222,10 +256,175 @@ Output: [{{"type": "faculty_availability", "faculty_name": "Prof. Meena", "avail
         for part in parts:
             lower = part.lower()
             for day in self.ALL_DAYS:
-                if lower == day.lower() or lower.startswith(day[:3].lower()):
+                day_name = day.lower()
+                day_abbr = day[:3].lower()
+                if (
+                    lower == day_name
+                    or lower.startswith(day_abbr)
+                    or re.search(rf"\b{re.escape(day_name)}\b", lower)
+                    or re.search(rf"\b{re.escape(day_abbr)}\b", lower)
+                ):
                     normalized.append(day)
                     break
         return sorted(set(normalized), key=lambda d: self.ALL_DAYS.index(d))
+
+    @staticmethod
+    def _normalize_text(value: Any) -> str:
+        value = str(value or "").strip().lower()
+        value = re.sub(r"[^a-z0-9]+", " ", value).strip()
+        honorifics = {"sir", "madam", "mam", "maam", "dr", "prof", "professor", "mr", "mrs", "ms"}
+        return " ".join(token for token in value.split() if token not in honorifics)
+
+    def _context_match(self, text: str, names: List[str]) -> Optional[str]:
+        normalized_text = self._normalize_text(text)
+        matches = []
+        for name in names:
+            normalized_name = self._normalize_text(name)
+            if not normalized_name:
+                continue
+            if normalized_name in normalized_text:
+                matches.append((len(normalized_name), name))
+            else:
+                tokens = normalized_name.split()
+                if tokens and all(token in normalized_text for token in tokens):
+                    matches.append((len(normalized_name), name))
+                elif tokens and tokens[0] in normalized_text.split():
+                    matches.append((len(tokens[0]), name))
+        return max(matches)[1] if matches else None
+
+    def _split_constraint_text(self, text: str) -> List[str]:
+        chunks = re.split(r"[\n\r.;]+", text or "")
+        return [chunk.strip(" -\t") for chunk in chunks if chunk.strip(" -\t")]
+
+    def _parse_period_numbers(self, text: str) -> List[int]:
+        numbers = re.findall(r"(?:period|periods|p)\s*(\d+)", text, flags=re.IGNORECASE)
+        if "last period" in text.lower():
+            numbers.append(str(self.context.get("periods_per_day") or 7))
+        periods = []
+        for number in numbers:
+            try:
+                value = int(number)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                periods.append(value)
+        return sorted(set(periods))
+
+    def _parse_rule_based_constraints(self, text: str) -> List[Dict[str, Any]]:
+        constraints = []
+        faculty_names = self.context.get("faculty_names", [])
+        subject_names = self.context.get("subject_names", [])
+        class_names = self.context.get("class_names", [])
+
+        for chunk in self._split_constraint_text(text):
+            lower = chunk.lower()
+            faculty_name = self._context_match(chunk, faculty_names)
+            subject_name = self._context_match(chunk, subject_names)
+            class_name = self._context_match(chunk, class_names)
+
+            if faculty_name and ("only available" in lower or "available only" in lower):
+                days = self._parse_day_names(chunk)
+                if days:
+                    constraints.append({"type": "faculty_availability", "faculty_name": faculty_name, "available_days": days})
+
+            if faculty_name and any(phrase in lower for phrase in [
+                "not available",
+                "unavailable",
+                "cannot teach",
+                "can't teach",
+                "will not arrive",
+                "won't arrive",
+                "not arrive",
+                "absent",
+                "on leave",
+            ]):
+                days = self._parse_day_names(chunk)
+                if days:
+                    constraints.append({"type": "faculty_unavailability", "faculty_name": faculty_name, "unavailable_days": days})
+
+            if "lab" in lower and any(phrase in lower for phrase in ["consecutive", "continuous", "back to back", "back-to-back"]):
+                constraints.append({"type": "consecutive_periods", "subject_type": "lab"})
+
+            if "lab" in lower and any(phrase in lower for phrase in ["after lunch", "afternoon", "post lunch", "second half"]):
+                constraints.append({
+                    "type": "preferred_time_slot",
+                    "target": "lab",
+                    "target_type": "subject",
+                    "preference": "afternoon",
+                    "soft": "if possible" in lower,
+                })
+
+            if subject_name and any(phrase in lower for phrase in ["not more than once", "only once", "once a day", "one time per day"]):
+                constraints.append({"type": "subject_max_per_day", "subject_name": subject_name, "max_per_day": 1})
+
+            if subject_name and any(slot in lower for slot in ["morning", "afternoon", "first half", "second half"]):
+                preference = "morning"
+                if "afternoon" in lower or "second half" in lower:
+                    preference = "afternoon"
+                elif "first half" in lower:
+                    preference = "first_half"
+                constraints.append({"type": "preferred_time_slot", "target": subject_name, "target_type": "subject", "preference": preference})
+
+            if class_name and any(slot in lower for slot in ["morning", "afternoon", "first half", "second half"]):
+                preference = "morning"
+                if "afternoon" in lower or "second half" in lower:
+                    preference = "afternoon"
+                elif "first half" in lower:
+                    preference = "first_half"
+                constraints.append({"type": "preferred_time_slot", "target": class_name, "target_type": "class", "preference": preference})
+
+            periods = self._parse_period_numbers(chunk)
+            if periods and any(phrase in lower for phrase in ["avoid", "not in", "should not", "don't schedule", "do not schedule"]):
+                if class_name:
+                    constraints.append({"type": "avoid_time_slot", "target": class_name, "target_type": "class", "periods": periods})
+                elif subject_name:
+                    constraints.append({"type": "avoid_time_slot", "target": subject_name, "target_type": "subject", "periods": periods})
+
+            gap_match = re.search(r"(?:gap|free period).*?(\d+)|(\d+).*?(?:gap|free period)", lower)
+            if class_name and gap_match:
+                min_gap = int(next(group for group in gap_match.groups() if group))
+                constraints.append({"type": "class_gap", "class_name": class_name, "min_gap": min_gap})
+
+        return self._normalize_constraints(constraints)
+
+    @staticmethod
+    def _merge_constraints(primary: List[Dict[str, Any]], supplemental: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        merged: List[Dict[str, Any]] = []
+        by_identity: Dict[str, Dict[str, Any]] = {}
+
+        for constraint in primary + supplemental:
+            c_type = constraint.get("type")
+            identity = None
+            if c_type == "faculty_availability":
+                identity = f"faculty_availability::{constraint.get('faculty_name', '').lower()}"
+            elif c_type == "faculty_unavailability":
+                identity = f"faculty_unavailability::{constraint.get('faculty_name', '').lower()}"
+            elif c_type == "avoid_time_slot":
+                identity = f"avoid_time_slot::{constraint.get('target_type', '').lower()}::{constraint.get('target', '').lower()}"
+
+            if identity and identity in by_identity:
+                existing = by_identity[identity]
+                if c_type == "faculty_availability":
+                    existing["available_days"] = sorted(
+                        set(existing.get("available_days", [])) | set(constraint.get("available_days", [])),
+                        key=lambda day: AIConstraintParser.ALL_DAYS.index(day) if day in AIConstraintParser.ALL_DAYS else 999,
+                    )
+                elif c_type == "faculty_unavailability":
+                    existing["unavailable_days"] = sorted(
+                        set(existing.get("unavailable_days", [])) | set(constraint.get("unavailable_days", [])),
+                        key=lambda day: AIConstraintParser.ALL_DAYS.index(day) if day in AIConstraintParser.ALL_DAYS else 999,
+                    )
+                elif c_type == "avoid_time_slot":
+                    existing["periods"] = sorted(set(existing.get("periods", [])) | set(constraint.get("periods", [])))
+                continue
+
+            key = json.dumps(constraint, sort_keys=True)
+            if any(json.dumps(item, sort_keys=True) == key for item in merged):
+                continue
+            merged.append(constraint)
+            if identity:
+                by_identity[identity] = constraint
+        return merged
 
     def _normalize_constraints(self, constraints: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         normalized = []
@@ -277,7 +476,15 @@ Output: [{{"type": "faculty_availability", "faculty_name": "Prof. Meena", "avail
                 if pref not in {"morning", "afternoon", "first_half", "second_half"}:
                     pref = "morning"
                 if target:
-                    normalized.append({"type": "preferred_time_slot", "target": str(target), "target_type": str(target_type), "preference": pref})
+                    normalized_constraint = {
+                        "type": "preferred_time_slot",
+                        "target": str(target),
+                        "target_type": str(target_type),
+                        "preference": pref,
+                    }
+                    if c.get("soft") is not None:
+                        normalized_constraint["soft"] = bool(c.get("soft"))
+                    normalized.append(normalized_constraint)
 
             # ── avoid_time_slot ──────────────────────────────────────────────
             elif c_type in {"avoid_time_slot", "blocked_periods", "avoid_periods"}:

@@ -76,6 +76,32 @@
     scrollbar-width: none;
 }
 
+.visible-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: #94a3b8 #f1f5f9;
+}
+
+.visible-scrollbar::-webkit-scrollbar {
+    display: block;
+    width: 10px;
+    height: 10px;
+}
+
+.visible-scrollbar::-webkit-scrollbar-track {
+    background: #f1f5f9;
+    border-radius: 999px;
+}
+
+.visible-scrollbar::-webkit-scrollbar-thumb {
+    background: #94a3b8;
+    border: 2px solid #f1f5f9;
+    border-radius: 999px;
+}
+
+.visible-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #64748b;
+}
+
 @keyframes fadeIn {
     from {
         opacity: 0;

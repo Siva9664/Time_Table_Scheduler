@@ -53,6 +53,91 @@ export default function TimetableView() {
     }
   };
 
+  // --- DOWNLOAD HANDLER ---
+  const handleDownload = () => {
+    if (!selected) return;
+    const printWindow = window.open('', '_blank');
+
+    const buildClassTables = () => {
+      if (!selected.schedule_data) return '';
+      return Object.values(selected.schedule_data).map(cs => {
+        const firstDay = Object.keys(cs.timetable)[0];
+        const headers = cs.timetable[firstDay].map(slot => {
+          const isBreak = slot.slot_type === 'break';
+          const label = isBreak ? (slot.label || 'Break') : `Period ${slot.period}`;
+          return `<th style="padding:8px 12px;background:${isBreak ? '#fff7ed' : '#f3f4f6'};border:1px solid #d1d5db;min-width:${isBreak ? '110px' : '130px'};text-align:center;font-size:11px;">
+            <div style="font-weight:700;text-transform:uppercase;color:${isBreak ? '#9a3412' : '#374151'};">${label}</div>
+            <div style="color:#9ca3af;font-family:monospace;font-size:10px;margin-top:2px;">${slot.time}</div>
+          </th>`;
+        }).join('');
+
+        const rows = Object.entries(cs.timetable).map(([day, periods]) => {
+          const cells = periods.map(slot => {
+            if (slot.slot_type === 'break') {
+              return `<td style="padding:8px;border:1px solid #d1d5db;text-align:center;background:#fffbeb;color:#92400e;font-size:12px;font-weight:700;text-transform:uppercase;">${slot.label || 'Break'}</td>`;
+            }
+            if (!slot.subject) return `<td style="padding:8px;border:1px solid #d1d5db;text-align:center;color:#d1d5db;font-size:11px;font-style:italic;">Free</td>`;
+            const bg = slot.is_lab ? '#eff6ff' : '#f0fdf4';
+            const border = slot.is_lab ? '#bfdbfe' : '#bbf7d0';
+            const color = slot.is_lab ? '#1e3a8a' : '#14532d';
+            return `<td style="padding:6px;border:1px solid #d1d5db;vertical-align:top;">
+              <div style="background:${bg};border:1px solid ${border};color:${color};border-radius:6px;padding:6px;height:100%;min-height:80px;">
+                <div style="font-weight:700;font-size:12px;">${slot.subject}</div>
+                <div style="font-size:10px;opacity:0.7;margin-top:2px;">${slot.subject_code || ''}</div>
+                <div style="font-size:11px;margin-top:6px;padding-top:4px;border-top:1px solid rgba(0,0,0,0.08);">👤 ${slot.faculty}</div>
+              </div>
+            </td>`;
+          }).join('');
+          return `<tr>
+            <td style="padding:10px 14px;border:1px solid #d1d5db;font-weight:600;color:#374151;background:#f9fafb;white-space:nowrap;">${day}</td>
+            ${cells}
+          </tr>`;
+        }).join('');
+
+        return `
+          <div style="margin-bottom:40px;page-break-inside:avoid;">
+            <h3 style="font-size:17px;font-weight:700;color:#111827;margin-bottom:4px;">${cs.class_name}</h3>
+            <p style="font-size:13px;color:#6b7280;margin-bottom:12px;">${cs.department} • ${cs.batch_name}</p>
+            <div style="overflow-x:auto;">
+              <table style="border-collapse:collapse;width:100%;">
+                <thead><tr>
+                  <th style="padding:8px 14px;background:#f3f4f6;border:1px solid #d1d5db;text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;color:#6b7280;">Day</th>
+                  ${headers}
+                </tr></thead>
+                <tbody>${rows}</tbody>
+              </table>
+            </div>
+          </div>`;
+      }).join('');
+    };
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>${selected.name} - Timetable</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 32px; color: #111827; }
+    h1 { font-size: 22px; font-weight: 800; margin-bottom: 4px; }
+    .meta { font-size: 13px; color: #6b7280; margin-bottom: 8px; }
+    .status { display: inline-block; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; background: #dcfce7; color: #166534; margin-bottom: 28px; }
+    @media print { body { padding: 16px; } }
+  </style>
+</head>
+<body>
+  <h1>${selected.name}</h1>
+  <p class="meta">${selected.academic_year || ''} • Semester ${selected.semester || ''}</p>
+  <span class="status">${selected.solver_status}</span>
+  ${buildClassTables()}
+  <script>window.onload = () => { window.print(); }<\/script>
+</body>
+</html>`;
+
+    printWindow.document.write(html);
+    printWindow.document.close();
+  };
+
   // --- DATA PIVOTING HELPERS ---
 
   const getFacultySchedule = (scheduleData) => {
@@ -80,6 +165,10 @@ export default function TimetableView() {
 
   // --- RENDERERS ---
 
+  const getSlotLabel = (slot) => (
+    slot.slot_type === 'break' ? (slot.label || 'Break') : `Period ${slot.period}`
+  );
+
   const renderClassView = () => (
     <div className="space-y-8">
       {selected.schedule_data && Object.values(selected.schedule_data).map((classSchedule) => (
@@ -90,15 +179,16 @@ export default function TimetableView() {
               <p className="text-sm text-gray-500">{classSchedule.department} • {classSchedule.batch_name}</p>
             </div>
           </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full border-collapse">
+          {/* Scrollable table container */}
+          <div className="visible-scrollbar" style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '420px', border: '1px solid #e5e7eb', borderRadius: '6px' }}>
+            <table style={{ minWidth: '750px', borderCollapse: 'collapse', width: '100%' }}>
               <thead>
                 <tr>
-                  <th className="p-3 bg-gray-50 border w-24 text-left text-xs font-bold text-gray-500 uppercase">Day</th>
+                  <th style={{ position: 'sticky', top: 0, left: 0, zIndex: 4, background: '#f9fafb', padding: '10px 14px', border: '1px solid #e5e7eb', textAlign: 'left', fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: '#6b7280', minWidth: '90px' }}>Day</th>
                   {classSchedule.timetable[Object.keys(classSchedule.timetable)[0]].map((slot, i) => (
-                    <th key={i} className="p-3 bg-gray-50 border min-w-[140px] text-center">
-                      <div className="text-xs font-bold text-gray-700 uppercase">Period {slot.period}</div>
-                      <div className="text-[10px] text-gray-400 font-mono mt-1">{slot.time}</div>
+                    <th key={i} style={{ position: 'sticky', top: 0, zIndex: 3, background: slot.slot_type === 'break' ? '#fff7ed' : '#f9fafb', padding: '10px 12px', border: '1px solid #e5e7eb', minWidth: slot.slot_type === 'break' ? '115px' : '145px', textAlign: 'center' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', color: slot.slot_type === 'break' ? '#9a3412' : '#374151' }}>{getSlotLabel(slot)}</div>
+                      <div style={{ fontSize: '10px', color: '#9ca3af', fontFamily: 'monospace', marginTop: '2px' }}>{slot.time}</div>
                     </th>
                   ))}
                 </tr>
@@ -106,21 +196,25 @@ export default function TimetableView() {
               <tbody>
                 {Object.entries(classSchedule.timetable).map(([day, periods]) => (
                   <tr key={day}>
-                    <td className="p-3 border font-semibold text-gray-700 bg-gray-50/30">{day}</td>
+                    <td style={{ position: 'sticky', left: 0, zIndex: 1, background: 'rgba(249,250,251,0.97)', padding: '10px 14px', border: '1px solid #e5e7eb', fontWeight: 600, color: '#374151', whiteSpace: 'nowrap' }}>{day}</td>
                     {periods.map((slot, idx) => (
-                      <td key={idx} className="p-2 border align-top h-24">
-                        {slot.subject ? (
-                          <div className={`h-full p-2 rounded-md flex flex-col justify-between ${slot.is_lab ? 'bg-blue-50 border border-blue-100 text-blue-900' : 'bg-green-50 border border-green-100 text-green-900'}`}>
+                      <td key={idx} style={{ padding: '6px', border: '1px solid #e5e7eb', verticalAlign: 'top', height: '100px' }}>
+                        {slot.slot_type === 'break' ? (
+                          <div style={{ height: '100%', minHeight: '72px', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', fontWeight: 700, fontSize: '12px', textTransform: 'uppercase' }}>
+                            {slot.label || 'Break'}
+                          </div>
+                        ) : slot.subject ? (
+                          <div style={{ height: '100%', padding: '8px', borderRadius: '6px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', background: slot.is_lab ? '#eff6ff' : '#f0fdf4', border: `1px solid ${slot.is_lab ? '#bfdbfe' : '#bbf7d0'}`, color: slot.is_lab ? '#1e3a8a' : '#14532d' }}>
                             <div>
-                              <div className="font-bold text-sm leading-tight">{slot.subject}</div>
-                              <div className="text-xs opacity-75 mt-0.5">{slot.subject_code}</div>
+                              <div style={{ fontWeight: 700, fontSize: '13px', lineHeight: 1.3 }}>{slot.subject}</div>
+                              <div style={{ fontSize: '11px', opacity: 0.7, marginTop: '2px' }}>{slot.subject_code}</div>
                             </div>
-                            <div className="mt-2 pt-2 border-t border-black/5 flex justify-between items-center">
-                              <span className="text-xs font-medium">👤 {slot.faculty}</span>
+                            <div style={{ marginTop: '8px', paddingTop: '6px', borderTop: '1px solid rgba(0,0,0,0.07)', fontSize: '11px', fontWeight: 500 }}>
+                              👤 {slot.faculty}
                             </div>
                           </div>
                         ) : (
-                          <div className="h-full flex items-center justify-center text-gray-300 text-xs italic">Free</div>
+                          <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#d1d5db', fontSize: '11px', fontStyle: 'italic' }}>Free</div>
                         )}
                       </td>
                     ))}
@@ -141,32 +235,32 @@ export default function TimetableView() {
           <h3 className="text-xl font-bold text-gray-800 mb-4 border-b pb-2">
             {type === 'faculty' ? '👤' : '🚪'} {name}
           </h3>
-          <div className="overflow-x-auto">
-            <table className="min-w-full border-collapse table-fixed">
+          <div className="visible-scrollbar" style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '420px', border: '1px solid #e5e7eb', borderRadius: '6px' }}>
+            <table style={{ minWidth: '600px', borderCollapse: 'collapse', width: '100%' }}>
               <thead>
                 <tr>
-                  <th className="p-2 bg-gray-50 border w-24">Day</th>
-                  <th className="p-2 bg-gray-50 border text-left">Schedule</th>
+                  <th style={{ position: 'sticky', top: 0, left: 0, zIndex: 4, background: '#f9fafb', padding: '10px 14px', border: '1px solid #e5e7eb', minWidth: '90px' }}>Day</th>
+                  <th style={{ position: 'sticky', top: 0, zIndex: 3, background: '#f9fafb', padding: '10px 14px', border: '1px solid #e5e7eb', textAlign: 'left' }}>Schedule</th>
                 </tr>
               </thead>
               <tbody>
                 {Object.entries(schedule).map(([day, slots]) => (
                   <tr key={day}>
-                    <td className="p-3 border font-semibold text-gray-700 bg-gray-50/30 align-top">{day}</td>
-                    <td className="p-2 border">
-                      <div className="flex flex-wrap gap-2">
+                    <td style={{ position: 'sticky', left: 0, zIndex: 1, background: 'rgba(249,250,251,0.97)', padding: '10px 14px', border: '1px solid #e5e7eb', fontWeight: 600, color: '#374151', verticalAlign: 'top', whiteSpace: 'nowrap' }}>{day}</td>
+                    <td style={{ padding: '8px', border: '1px solid #e5e7eb' }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                         {slots.sort((a, b) => a.period - b.period).map((slot, idx) => (
-                          <div key={idx} className="bg-gray-50 border rounded p-2 min-w-[180px]">
-                            <div className="text-xs font-mono text-gray-500 mb-1">
+                          <div key={idx} style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: '6px', padding: '8px', minWidth: '180px' }}>
+                            <div style={{ fontSize: '11px', fontFamily: 'monospace', color: '#9ca3af', marginBottom: '4px' }}>
                               {slot.time} (P{slot.period})
                             </div>
-                            <div className="font-bold text-sm text-primary-700">
+                            <div style={{ fontWeight: 700, fontSize: '13px', color: '#2563eb' }}>
                               {slot.class_name}
                             </div>
-                            <div className="text-xs text-gray-600">
+                            <div style={{ fontSize: '12px', color: '#4b5563' }}>
                               {slot.subject}
                             </div>
-                            <div className="text-xs text-gray-500 mt-1">
+                            <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '4px' }}>
                               👤 {slot.faculty}
                             </div>
                           </div>
@@ -212,13 +306,12 @@ export default function TimetableView() {
               </button>
               <h3 className="font-bold text-lg mb-1">{t.name}</h3>
               <p className="text-gray-600 mb-4">{t.academic_year} • Semester {t.semester}</p>
-              <div className="flex justify-between items-center text-sm">
+              <div className="flex items-center text-sm">
                 <span className={`px-2 py-1 rounded-full ${t.solver_status === 'OPTIMAL' ? 'bg-green-100 text-green-700' :
                   t.solver_status === 'FEASIBLE' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'
                   }`}>
                   {t.solver_status}
                 </span>
-                <span className="text-gray-400">{(t.solve_time_seconds || 0)}s</span>
               </div>
             </div>
           ))}
@@ -241,31 +334,58 @@ export default function TimetableView() {
             ← Back to Directory
           </button>
 
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="p-6 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+            {/* Header bar */}
+            <div className="p-6 border-b border-gray-100 bg-gray-50/50 flex justify-between items-center flex-wrap gap-3">
               <div>
                 <h2 className="text-2xl font-bold text-gray-900">{selected.name}</h2>
                 <p className="text-gray-500 text-sm mt-1">Status: {selected.solver_status}</p>
               </div>
 
-              {/* TABS */}
-              <div className="flex bg-gray-200/50 p-1 rounded-lg">
-                {['classes', 'faculty'].map((tab) => (
-                  <button
-                    key={tab}
-                    onClick={() => setActiveTab(tab)}
-                    className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === tab
-                      ? 'bg-white text-primary-600 shadow-sm'
-                      : 'text-gray-600 hover:text-gray-900'
-                      }`}
-                  >
-                    {tab.charAt(0).toUpperCase() + tab.slice(1)} View
-                  </button>
-                ))}
+              {/* TABS + DOWNLOAD */}
+              <div className="flex items-center gap-3">
+                <div className="flex bg-gray-200/50 p-1 rounded-lg">
+                  {['classes', 'faculty'].map((tab) => (
+                    <button
+                      key={tab}
+                      onClick={() => setActiveTab(tab)}
+                      className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === tab
+                        ? 'bg-white text-primary-600 shadow-sm'
+                        : 'text-gray-600 hover:text-gray-900'
+                        }`}
+                    >
+                      {tab.charAt(0).toUpperCase() + tab.slice(1)} View
+                    </button>
+                  ))}
+                </div>
+
+                {/* Download Button */}
+                <button
+                  onClick={handleDownload}
+                  title="Download Timetable as PDF"
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '6px',
+                    padding: '8px 16px', borderRadius: '8px',
+                    background: 'linear-gradient(135deg, #2563eb, #1d4ed8)',
+                    color: '#fff', fontWeight: 600, fontSize: '14px',
+                    border: 'none', cursor: 'pointer', boxShadow: '0 1px 4px rgba(37,99,235,0.3)',
+                    transition: 'opacity 0.15s'
+                  }}
+                  onMouseOver={e => e.currentTarget.style.opacity = '0.88'}
+                  onMouseOut={e => e.currentTarget.style.opacity = '1'}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="7 10 12 15 17 10"/>
+                    <line x1="12" y1="15" x2="12" y2="3"/>
+                  </svg>
+                  Download PDF
+                </button>
               </div>
             </div>
 
-            <div className="p-6 bg-gray-50/30 min-h-[600px]">
+            {/* Scrollable content area */}
+            <div className="visible-scrollbar" style={{ overflowY: 'auto', overflowX: 'auto', maxHeight: 'calc(100vh - 260px)', minHeight: '400px', padding: '24px', background: 'rgba(249,250,251,0.3)' }}>
               {activeTab === 'classes' && renderClassView()}
               {activeTab === 'faculty' && renderResourceView(getFacultySchedule(selected.schedule_data), 'faculty')}
             </div>
@@ -275,4 +395,3 @@ export default function TimetableView() {
     </div>
   );
 }
-

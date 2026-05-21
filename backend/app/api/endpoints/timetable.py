@@ -204,10 +204,7 @@ def generate_timetable(request: TimetableGenerateRequest, db: Database = Depends
     if request.constraints_text:
         try:
             # ── Build context from live DB data so AI can match real names ──
-            faculty_query = {}
-            if request.department_ids:
-                faculty_query = {"department_id": {"$in": request.department_ids}}
-            faculty_docs  = list(db["faculty"].find(faculty_query, {"name": 1}))
+            faculty_docs  = list(db["faculty"].find({}, {"name": 1}))
             subject_docs  = list(db["subjects"].find({}, {"name": 1}))
             class_docs    = list(db["classes"].find({}, {"name": 1, "section": 1}))
 
@@ -218,6 +215,7 @@ def generate_timetable(request: TimetableGenerateRequest, db: Database = Depends
                     f"{d.get('name', '')} {d.get('section', '')}".strip()
                     for d in class_docs if d.get("name")
                 ],
+                "periods_per_day": request.periods_per_day,
             }
 
             parser = AIConstraintParser(
@@ -228,14 +226,26 @@ def generate_timetable(request: TimetableGenerateRequest, db: Database = Depends
                 context=context,
             )
             custom_constraints = parser.parse_constraints(request.constraints_text)
+            if not custom_constraints:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Could not understand the AI constraints. Please use real faculty, subject, or class names from your data."
+                )
             print(f"Parsed Constraints: {custom_constraints}")
+        except HTTPException:
+            raise
         except Exception as e:
-            print(f"AI Parser Warning: {e}")
+            raise HTTPException(status_code=400, detail=f"AI constraint parsing failed: {e}")
 
     scheduler = TimetableScheduler(db=db, working_days=request.working_days, periods_per_day=request.periods_per_day,
                                    time_limit_seconds=settings.SOLVER_TIME_LIMIT_SECONDS,
                                    custom_constraints=custom_constraints)
-    result = scheduler.generate_schedule(department_ids=request.department_ids)
+    result = scheduler.generate_schedule(
+        department_ids=request.department_ids,
+        batch_ids=request.batch_ids,
+        class_ids=request.class_ids,
+        faculty_ids=request.faculty_ids,
+    )
     if result["status"] == "ERROR":
         raise HTTPException(status_code=400, detail=result.get("message", "Failed"))
     if result["status"] in ["INFEASIBLE", "MODEL_INVALID"]:
@@ -248,7 +258,8 @@ def generate_timetable(request: TimetableGenerateRequest, db: Database = Depends
         "schedule_data": result["schedule"],
         "constraints_used": {
             "working_days": request.working_days,
-            "periods_per_day": request.periods_per_day,
+            "periods_per_day": result.get("effective_periods_per_day", request.periods_per_day),
+            "requested_periods_per_day": request.periods_per_day,
             "department_ids": request.department_ids,
             "start_time": request.start_time,
             "end_time": request.end_time,
@@ -259,6 +270,8 @@ def generate_timetable(request: TimetableGenerateRequest, db: Database = Depends
             "lunch_duration_mins": request.lunch_duration_mins,
             "break2_after_period": request.break2_after_period,
             "break2_duration_mins": request.break2_duration_mins,
+            "constraints_text": request.constraints_text,
+            "custom_constraints": custom_constraints,
         },
         "solver_status": result["status"],
         "solve_time_seconds": result["solve_time"],
