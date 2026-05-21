@@ -188,7 +188,7 @@ export default function BatchManager() {
                 <div className="card mb-6 bg-white p-6 rounded-lg shadow-sm border border-gray-100">
                     <h2 className="text-xl font-bold mb-4">{editData ? 'Edit Batch Configuration' : 'Add New Batch Configuration'}</h2>
                     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                             <div><label className="block text-sm font-medium mb-1">Batch Name *</label><input {...register('name', { required: true })} className="input w-full border rounded p-2" placeholder="e.g. 1st Year Main block" /></div>
                             <div><label className="block text-sm font-medium mb-1">Period Duration (mins) *</label><input {...register('period_duration', { required: true })} type="number" defaultValue="60" className="input w-full border rounded p-2" /></div>
                         </div>

@@ -171,7 +171,7 @@ export default function SubjectManager() {
           <p className="text-gray-500 mt-2">Kindly add it.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {subjects.map(sub => (
             <div key={sub.id} className="card relative group hover:shadow-lg transition-shadow">
               <div className="absolute top-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
