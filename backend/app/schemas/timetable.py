@@ -74,7 +74,7 @@ class ClassResponse(ClassBase):
 class SubjectBase(BaseModel):
     name: str
     code: str
-    hours_per_week: int
+    hours_per_week: Optional[int] = None
     credits: int = 3
     requires_lab: bool = False
     department_id: Optional[str] = None

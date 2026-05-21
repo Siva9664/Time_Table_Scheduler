@@ -7,6 +7,9 @@ import logging
 from datetime import datetime, timedelta
 import re
 
+# Credit → contact hours/week mapping (industry standard for Indian universities)
+CREDITS_TO_HOURS: Dict[int, int] = {1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6}
+
 logger = logging.getLogger(__name__)
 
 
@@ -46,10 +49,15 @@ class TimetableScheduler:
         self.model = cp_model.CpModel()
         self.variables = {}  # Map: "s{subject_id}_d{day_index}_p{period_index}" -> BoolVar
 
+        # Smart correction state
+        self._adjusted_hours: Dict[str, int] = {}   # subject_id -> corrected hours
+        self.auto_adjustments: List[str] = []        # human-readable auto-fix messages
+        self.constraint_warnings: List[str] = []     # soft-fail warnings from custom constraints
+
         # Optimization Caches
         self.vars_by_faculty = {}  # faculty_id -> day -> list of {'start', 'end', 'var', 'period'}
         self.vars_by_subject = {}  # subject_id -> list of BoolVar
-        self.constraint_errors = []
+
 
     def _wrap(self, doc: dict) -> _Obj:
         return _Obj(doc)
@@ -216,6 +224,16 @@ class TimetableScheduler:
         value = str(value or "").strip().lower()
         return re.sub(r"[^a-z0-9]+", " ", value).strip()
 
+    def _effective_hours(self, subject: _Obj) -> int:
+        """Return hours/week for a subject: adjusted > explicit > credits mapping."""
+        if subject.id in self._adjusted_hours:
+            return self._adjusted_hours[subject.id]
+        raw = subject.hours_per_week
+        if raw is not None and int(raw) > 0:
+            return int(raw)
+        credits = int(subject.credits or 3)
+        return CREDITS_TO_HOURS.get(credits, credits)
+
     def _matches_text(self, target: str, candidate: str) -> bool:
         target = self._normalize_match_text(target)
         candidate = self._normalize_match_text(candidate)
@@ -265,7 +283,8 @@ class TimetableScheduler:
         return [sub for sub in self.subjects if self._matches_subject(target, sub)]
 
     def _constraint_error(self, message: str):
-        self.constraint_errors.append(message)
+        """Soft-fail: record warning and continue, never block scheduling."""
+        self.constraint_warnings.append(message)
         logger.warning(message)
 
     def _calculate_class_period_intervals(self, class_obj: _Obj, max_periods: Optional[int] = None) -> List[Tuple[int, int]]:
@@ -440,11 +459,11 @@ class TimetableScheduler:
     def add_constraints(self):
         logger.info("Step 3/5: Adding constraints to the model...")
 
-        # 1. Subject Requirements: sum(all subject vars) == hours_per_week
+        # 1. Subject Requirements: sum(all subject vars) == effective_hours
         for subject in self.subjects:
             all_sub_vars = self.vars_by_subject.get(subject.id, [])
             if all_sub_vars:
-                self.model.Add(sum(all_sub_vars) == subject.hours_per_week)
+                self.model.Add(sum(all_sub_vars) == self._effective_hours(subject))
         logger.debug("Added Subject Requirement constraints")
 
         # 2. Class Concurrency: Max 1 subject per class per period
@@ -498,7 +517,7 @@ class TimetableScheduler:
             if not sub.requires_lab:
                 continue
 
-            hours = sub.hours_per_week or 1
+            hours = self._effective_hours(sub)
 
             # is_lab_day[day] = 1 if this day is chosen for the lab session
             is_lab_day = [
@@ -942,7 +961,7 @@ class TimetableScheduler:
         for s in self.subjects:
             if s.faculty_id:
                 fid = self._id_str(s.faculty_id)
-                assigned_hours[fid] = assigned_hours.get(fid, 0) + (s.hours_per_week or 0)
+                assigned_hours[fid] = assigned_hours.get(fid, 0) + self._effective_hours(s)
 
         # Subjects that need faculty
         unassigned = [s for s in self.subjects if not s.faculty_id]
@@ -965,7 +984,7 @@ class TimetableScheduler:
 
             # Filter by capacity (max_hours)
             viable = []
-            need = subj.hours_per_week or 0
+            need = self._effective_hours(subj)
             for f in candidates:
                 fid = self._id_str(f.id)
                 max_h = getattr(f, 'max_hours_per_week', None) or 0
@@ -1042,57 +1061,64 @@ class TimetableScheduler:
                 logger.warning(msg)
                 return {"status": "ERROR", "message": msg, "data_summary": data_summary}
 
-        # VALIDATION 2: Class Workload vs Available Slots
-        overloaded_classes = []
+        # VALIDATION 2: Smart Overflow Auto-Correction (think like staff)
         for class_obj in self.classes:
             class_subjects = [s for s in self.subjects if self._id_str(s.class_id) == self._id_str(class_obj.id)]
-            total_hours = sum(s.hours_per_week for s in class_subjects)
+            if not class_subjects:
+                continue
+            # Priority: labs first, then higher credits first
+            class_subjects_sorted = sorted(
+                class_subjects,
+                key=lambda s: (-(1 if s.requires_lab else 0), -(int(s.credits or 3)))
+            )
+            total_eff = sum(self._effective_hours(s) for s in class_subjects_sorted)
             total_slots = self.num_days * len(self._get_class_period_intervals(class_obj))
-            if total_hours > total_slots:
-                subj_details = [f"{s.name} ({s.hours_per_week}h)" for s in class_subjects]
-                overloaded_classes.append(f"{class_obj.name} : Requires {total_hours} slots, but only {total_slots} available. Breakdown: {', '.join(subj_details)}")
 
-        if overloaded_classes:
-            return {
-                "status": "ERROR",
-                "message": f"Impossible Schedule (Class Overload):\n" + "\n".join(overloaded_classes),
-                "data_summary": data_summary
-            }
+            if total_eff > total_slots:
+                excess = total_eff - total_slots
+                logger.warning(f"Class '{class_obj.name}' overloaded by {excess} slots — auto-correcting...")
+                # Trim from lowest priority subjects first
+                for sub in reversed(class_subjects_sorted):
+                    if excess <= 0:
+                        break
+                    current = self._effective_hours(sub)
+                    minimum = max(1, current // 2)  # never reduce below half
+                    can_cut = current - minimum
+                    if can_cut > 0:
+                        cut = min(excess, can_cut)
+                        new_h = current - cut
+                        self._adjusted_hours[sub.id] = new_h
+                        self.auto_adjustments.append(
+                            f"'{class_obj.name}': '{sub.name}' hours reduced {current}→{new_h} "
+                            f"to fit {total_slots} available slots."
+                        )
+                        excess -= cut
+                if excess > 0:
+                    self.auto_adjustments.append(
+                        f"'{class_obj.name}': Still {excess} slot(s) over limit after auto-reduction. "
+                        f"Some periods may be unscheduled."
+                    )
 
-        # VALIDATION 3: Faculty Workload vs Max Hours
-        overloaded_faculty = []
+        # VALIDATION 3: Faculty Workload — warn, don't block
         for fac in self.faculty:
             fac_subjects = [s for s in self.subjects if self._id_str(s.faculty_id) == self._id_str(fac.id)]
-            total_assigned_hours = sum(s.hours_per_week for s in fac_subjects)
-            if total_assigned_hours > fac.max_hours_per_week:
-                overloaded_faculty.append(f"{fac.name}: Assigned {total_assigned_hours} hrs, Max is {fac.max_hours_per_week}.")
-
-        if overloaded_faculty:
-            return {
-                "status": "ERROR",
-                "message": f"Impossible Schedule (Faculty Overload):\n" + "\n".join(overloaded_faculty),
-                "data_summary": data_summary
-            }
+            total_assigned = sum(self._effective_hours(s) for s in fac_subjects)
+            max_h = int(fac.max_hours_per_week or 40)
+            if total_assigned > max_h:
+                self.auto_adjustments.append(
+                    f"Faculty '{fac.name}': assigned {total_assigned} hrs exceeds max {max_h} hrs/week. "
+                    f"Schedule may be tight."
+                )
 
         self.create_variables()
         self.add_constraints()
-        if self.constraint_errors:
-            return {
-                "status": "ERROR",
-                "message": "AI constraint errors:\n" + "\n".join(self.constraint_errors),
-                "data_summary": data_summary,
-                "effective_periods_per_day": self.periods_per_day,
-            }
+        # Constraints are now soft-fail — never block scheduling
         result = self.solve()
         if result.get("schedule"):
-            schedule_errors = self._validate_custom_constraints_against_schedule(result["schedule"])
-            if schedule_errors:
-                return {
-                    "status": "ERROR",
-                    "message": "Generated timetable violates AI constraints:\n" + "\n".join(schedule_errors),
-                    "data_summary": data_summary,
-                    "effective_periods_per_day": self.periods_per_day,
-                }
+            schedule_warnings = self._validate_custom_constraints_against_schedule(result["schedule"])
+            self.constraint_warnings.extend(schedule_warnings)
         result["data_summary"] = data_summary
         result["effective_periods_per_day"] = self.periods_per_day
+        result["auto_adjustments"] = self.auto_adjustments
+        result["constraint_warnings"] = self.constraint_warnings
         return result

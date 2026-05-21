@@ -48,7 +48,7 @@ def subject_helper(doc: dict, assigned_class: dict = None) -> dict:
         "id": str(doc["_id"]),
         "name": doc.get("name", ""),
         "code": doc.get("code", ""),
-        "hours_per_week": doc.get("hours_per_week", 0),
+        "hours_per_week": doc.get("hours_per_week"),  # None means derive from credits
         "requires_lab": doc.get("requires_lab", False),
         "department_id": doc.get("department_id"),
         "department_ids": department_ids or [],

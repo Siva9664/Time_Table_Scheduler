@@ -250,6 +250,7 @@ def update_faculty(id: str, fac: FacultyUpdate, db: Database = Depends(get_tenan
 @router.post("/generate", response_model=TimetableResponse)
 def generate_timetable(request: TimetableGenerateRequest, db: Database = Depends(get_tenant_db), current_user: dict = Depends(get_admin_user)):
     custom_constraints = []
+    parse_diagnostics = {"corrections": [], "warnings": [], "unrecognized": []}
     if request.constraints_text:
         try:
             # ── Build context from live DB data so AI can match real names ──
@@ -274,11 +275,17 @@ def generate_timetable(request: TimetableGenerateRequest, db: Database = Depends
                 api_base=settings.OPENAI_API_BASE,
                 context=context,
             )
-            custom_constraints = parser.parse_constraints(request.constraints_text)
-            if not custom_constraints:
-                print("Warning: No constraints could be parsed from the provided text. Generating timetable without custom constraints.")
+            parse_result = parser.parse_constraints_with_diagnostics(request.constraints_text)
+            custom_constraints = parse_result["constraints"]
+            parse_diagnostics = {
+                "corrections":   parse_result.get("corrections",   []),
+                "warnings":      parse_result.get("warnings",      []),
+                "unrecognized":  parse_result.get("unrecognized",  []),
+            }
+            if custom_constraints:
+                print(f"Parsed {len(custom_constraints)} constraints: {custom_constraints}")
             else:
-                print(f"Parsed Constraints: {custom_constraints}")
+                print("Warning: no constraints parsed — proceeding without custom constraints")
         except HTTPException:
             raise
         except Exception as e:
@@ -319,6 +326,9 @@ def generate_timetable(request: TimetableGenerateRequest, db: Database = Depends
             "break2_duration_mins": request.break2_duration_mins,
             "constraints_text": request.constraints_text,
             "custom_constraints": custom_constraints,
+            "parse_diagnostics": parse_diagnostics,
+            "auto_adjustments": result.get("auto_adjustments", []),
+            "constraint_warnings": result.get("constraint_warnings", []),
         },
         "solver_status": result["status"],
         "solve_time_seconds": result["solve_time"],
