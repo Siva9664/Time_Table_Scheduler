@@ -91,8 +91,10 @@ const FacultyMapping = () => {
                 faculty_id: selectedFacultyId
             });
 
-            // Refresh data
-            await loadData();
+            // Optimistically update local state instead of doing a full slow re-fetch
+            setSubjects(prev => prev.map(s => 
+                s.id === selectedSubjectId ? { ...s, class_id: selectedClassId, faculty_id: selectedFacultyId } : s
+            ));
 
             // Reset form partly (keep faculty selected)
             setSelectedSubjectId('');
@@ -133,7 +135,10 @@ const FacultyMapping = () => {
         if (!subjectToUnassign) return;
         try {
             await subjectAPI.update(subjectToUnassign, { faculty_id: null });
-            loadData();
+            // Optimistically update local state instead of doing a full slow re-fetch
+            setSubjects(prev => prev.map(s => 
+                s.id === subjectToUnassign ? { ...s, faculty_id: null } : s
+            ));
             showToast('Faculty unassigned!', 'success');
         } catch (error) {
             showToast('Failed to unassign faculty.', 'error');
