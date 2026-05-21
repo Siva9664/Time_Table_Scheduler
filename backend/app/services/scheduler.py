@@ -1049,7 +1049,8 @@ class TimetableScheduler:
             total_hours = sum(s.hours_per_week for s in class_subjects)
             total_slots = self.num_days * len(self._get_class_period_intervals(class_obj))
             if total_hours > total_slots:
-                overloaded_classes.append(f"{class_obj.name}: Requires {total_hours} slots, but only {total_slots} available.")
+                subj_details = [f"{s.name} ({s.hours_per_week}h)" for s in class_subjects]
+                overloaded_classes.append(f"{class_obj.name} : Requires {total_hours} slots, but only {total_slots} available. Breakdown: {', '.join(subj_details)}")
 
         if overloaded_classes:
             return {

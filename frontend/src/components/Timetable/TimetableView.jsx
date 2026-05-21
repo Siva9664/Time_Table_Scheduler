@@ -109,7 +109,7 @@ export default function TimetableView() {
                 <div style="background:${bg};border:1px solid ${border};color:${color};border-radius:6px;padding:6px;height:100%;min-height:80px;">
                   <div style="font-weight:700;font-size:12px;">${slot.subject}</div>
                   <div style="font-size:10px;opacity:0.7;margin-top:2px;">${slot.subject_code || ''}</div>
-                  <div style="font-size:11px;margin-top:6px;padding-top:4px;border-top:1px solid rgba(0,0,0,0.08);">👤 ${slot.faculty}</div>
+                  <div style="font-size:11px;margin-top:6px;padding-top:4px;border-top:1px solid rgba(0,0,0,0.08);"><span style="opacity:0.8;">Faculty:</span> ${slot.faculty}</div>
                 </div>
               </td>`;
             }).join('');
@@ -163,7 +163,7 @@ export default function TimetableView() {
             <div>
               <div style="margin-bottom:20px;">
                 <h1 style="font-size:22px;font-weight:800;margin-bottom:4px;color:#111827;">${selected.name} <span style="font-size:14px;font-weight:400;color:#6b7280;margin-left:12px;">(Faculty View)</span></h1>
-                <h3 style="font-size:18px;font-weight:700;color:#111827;margin-bottom:4px;">👤 ${facultyName}</h3>
+                <h3 style="font-size:18px;font-weight:700;color:#111827;margin-bottom:4px;">${facultyName}</h3>
               </div>
               <table style="border-collapse:collapse;width:100%;">
                 <thead><tr>
