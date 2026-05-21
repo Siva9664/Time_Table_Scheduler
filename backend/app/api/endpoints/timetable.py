@@ -276,11 +276,9 @@ def generate_timetable(request: TimetableGenerateRequest, db: Database = Depends
             )
             custom_constraints = parser.parse_constraints(request.constraints_text)
             if not custom_constraints:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Could not understand the AI constraints. Please use real faculty, subject, or class names from your data."
-                )
-            print(f"Parsed Constraints: {custom_constraints}")
+                print("Warning: No constraints could be parsed from the provided text. Generating timetable without custom constraints.")
+            else:
+                print(f"Parsed Constraints: {custom_constraints}")
         except HTTPException:
             raise
         except Exception as e:
