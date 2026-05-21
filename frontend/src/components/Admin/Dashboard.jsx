@@ -63,7 +63,7 @@ export default function Dashboard() {
       <div className="absolute right-10 bottom-2 w-16 h-16 bg-black/5 rounded-full blur-xl" />
 
       <div className="relative flex flex-col items-center justify-center text-center">
-        <p className="text-6xl font-black mb-2 tracking-tight">{value}</p>
+        <p className="text-6xl font-black mb-2 tracking-tight">{loading ? <span className="animate-pulse">...</span> : value}</p>
         <p className="text-xs font-bold uppercase tracking-[0.2em] opacity-90">{title}</p>
       </div>
     </div>
@@ -79,12 +79,6 @@ export default function Dashboard() {
     </button>
   );
 
-  if (loading) return (
-    <div className="flex flex-col items-center justify-center h-full space-y-4">
-      <div className="w-12 h-12 border-4 border-primary-500 border-t-transparent rounded-full animate-spin"></div>
-      <div className="text-xl font-medium text-gray-500">Wait a moment...</div>
-    </div>
-  );
 
   return (
     <div className="max-w-7xl mx-auto space-y-10">
