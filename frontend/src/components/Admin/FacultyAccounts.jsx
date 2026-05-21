@@ -66,7 +66,7 @@ export default function FacultyAccounts() {
         message="Are you sure you want to delete this faculty's login credentials? They will no longer be able to log in. Their timetable schedules will remain intact."
       />
 
-      <div className="flex justify-between items-center bg-slate-50 p-4 rounded-2xl border border-slate-100">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-100">
         <div>
            <h2 className="text-xl font-bold text-slate-700 flex items-center gap-2">
                <Key size={20} className="text-primary-500" /> 

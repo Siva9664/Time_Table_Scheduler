@@ -260,7 +260,7 @@ Output: {{"constraints": [{{"type": "faculty_availability", "faculty_name": "Pro
         else:
             return []
 
-        normalized = []
+        normalized: List[str] = []
         for part in parts:
             lower = part.lower()
             for day in self.ALL_DAYS:
@@ -319,7 +319,7 @@ Output: {{"constraints": [{{"type": "faculty_availability", "faculty_name": "Pro
         return sorted(set(periods))
 
     def _parse_rule_based_constraints(self, text: str) -> List[Dict[str, Any]]:
-        constraints = []
+        constraints: List[Dict[str, Any]] = []
         faculty_names = self.context.get("faculty_names", [])
         subject_names = self.context.get("subject_names", [])
         class_names = self.context.get("class_names", [])
@@ -435,7 +435,7 @@ Output: {{"constraints": [{{"type": "faculty_availability", "faculty_name": "Pro
         return merged
 
     def _normalize_constraints(self, constraints: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        normalized = []
+        normalized: List[Dict[str, Any]] = []
 
         for c in constraints:
             if not isinstance(c, dict):
@@ -484,7 +484,7 @@ Output: {{"constraints": [{{"type": "faculty_availability", "faculty_name": "Pro
                 if pref not in {"morning", "afternoon", "first_half", "second_half"}:
                     pref = "morning"
                 if target:
-                    normalized_constraint = {
+                    normalized_constraint: Dict[str, Any] = {
                         "type": "preferred_time_slot",
                         "target": str(target),
                         "target_type": str(target_type),

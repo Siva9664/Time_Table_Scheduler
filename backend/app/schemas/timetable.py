@@ -75,6 +75,7 @@ class SubjectBase(BaseModel):
     name: str
     code: str
     hours_per_week: int
+    credits: int = 3
     requires_lab: bool = False
     department_id: Optional[str] = None
     department_ids: Optional[List[str]] = None
@@ -89,6 +90,7 @@ class SubjectUpdate(BaseModel):
     name: Optional[str] = None
     code: Optional[str] = None
     hours_per_week: Optional[int] = None
+    credits: Optional[int] = None
     requires_lab: Optional[bool] = None
     required_lab: Optional[bool] = None
     department_id: Optional[str] = None

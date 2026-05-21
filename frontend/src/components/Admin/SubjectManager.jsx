@@ -53,6 +53,7 @@ export default function SubjectManager() {
     setValue('department_ids', sub.department_ids && sub.department_ids.length > 0 ? sub.department_ids : (sub.department_id ? [sub.department_id] : []));
     setValue('batch_id', sub.batch_id);
     setValue('hours_per_week', sub.hours_per_week);
+    setValue('credits', sub.credits);
     setValue('requires_lab', sub.requires_lab ? 'true' : 'false');
     setShowForm(true);
     setTimeout(() => {
@@ -72,6 +73,7 @@ export default function SubjectManager() {
         batch_id: data.batch_id || null,
         faculty_id: null,
         hours_per_week: parseInt(data.hours_per_week),
+        credits: parseInt(data.credits) || 0,
         requires_lab: data.requires_lab === 'true'
       };
 
@@ -119,7 +121,7 @@ export default function SubjectManager() {
         message="Are you sure you want to delete this subject?"
       />
 
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
         <h1 className="text-3xl font-bold">Subjects</h1>
         <div className="flex gap-2">
           <CsvUploader type="subjects" onSuccess={loadData} />
@@ -153,6 +155,7 @@ export default function SubjectManager() {
               <select {...register('batch_id', { required: true })} className="input"><option value="">Select</option>{batches.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
             </div>
             <div><label className="block text-sm font-medium mb-2">Hours/Week *</label><input {...register('hours_per_week', { required: true })} type="number" className="input" /></div>
+            <div><label className="block text-sm font-medium mb-2">Credits *</label><input {...register('credits', { required: true })} type="number" className="input" defaultValue={3} /></div>
             <div><label className="block text-sm font-medium mb-2">Lab?</label><select {...register('requires_lab')} className="input"><option value="false">No</option><option value="true">Yes</option></select></div>
             <div className="flex justify-end gap-2">
               <button type="button" onClick={() => setShowForm(false)} className="btn btn-secondary">Cancel</button>
@@ -195,6 +198,7 @@ export default function SubjectManager() {
               </p>
               <p className="text-sm text-gray-600">Batch: {batches.find(b => b.id === sub.batch_id)?.name}</p>
               <p>Hours/Week: {sub.hours_per_week}</p>
+              <p>Credits: {sub.credits || 3}</p>
               <p>Lab: {sub.requires_lab ? 'Yes' : 'No'}</p>
             </div>
           ))}

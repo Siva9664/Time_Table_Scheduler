@@ -25,6 +25,28 @@ api.interceptors.response.use(
   }
 );
 
+
+// Simple In-Memory Cache for ultra-fast page loads
+const cache = new Map();
+export const clearApiCache = () => cache.clear();
+
+const getCached = async (url) => {
+    if (cache.has(url)) {
+        // Return a clone to prevent accidental mutations by components
+        return { data: JSON.parse(JSON.stringify(cache.get(url))) };
+    }
+    const response = await api.get(url);
+    cache.set(url, response.data);
+    return response;
+};
+
+const withCacheClear = (requestPromise) => {
+    return requestPromise.then(res => {
+        clearApiCache();
+        return res;
+    });
+};
+
 export const authAPI = {
   login: (email, password) => api.post('/auth/login', new URLSearchParams({ username: email, password })),
   register: (data) => api.post('/auth/register', data),
@@ -36,38 +58,38 @@ export const authAPI = {
 };
 
 export const batchAPI = {
-  getAll: () => api.get('/batches'),
-  create: (data) => api.post('/batches', data),
-  update: (id, data) => api.put(`/batches/${id}`, data),
-  delete: (id) => api.delete(`/batches/${id}`)
+  getAll: () => getCached('/batches'),
+  create: (data) => withCacheClear(api.post('/batches', data)),
+  update: (id, data) => withCacheClear(api.put(`/batches/${id}`, data)),
+  delete: (id) => withCacheClear(api.delete(`/batches/${id}`))
 };
 
 export const departmentAPI = {
-  getAll: () => api.get('/departments'),
-  create: (data) => api.post('/departments', data),
-  update: (id, data) => api.put(`/departments/${id}`, data),
-  delete: (id) => api.delete(`/departments/${id}`)
+  getAll: () => getCached('/departments'),
+  create: (data) => withCacheClear(api.post('/departments', data)),
+  update: (id, data) => withCacheClear(api.put(`/departments/${id}`, data)),
+  delete: (id) => withCacheClear(api.delete(`/departments/${id}`))
 };
 
 export const classAPI = {
-  getAll: () => api.get('/classes'),
-  create: (data) => api.post('/classes', data),
-  update: (id, data) => api.put(`/classes/${id}`, data),
-  delete: (id) => api.delete(`/classes/${id}`)
+  getAll: () => getCached('/classes'),
+  create: (data) => withCacheClear(api.post('/classes', data)),
+  update: (id, data) => withCacheClear(api.put(`/classes/${id}`, data)),
+  delete: (id) => withCacheClear(api.delete(`/classes/${id}`))
 };
 
 export const subjectAPI = {
-  getAll: () => api.get('/subjects'),
-  create: (data) => api.post('/subjects', data),
-  update: (id, data) => api.put(`/subjects/${id}`, data),
-  delete: (id) => api.delete(`/subjects/${id}`)
+  getAll: () => getCached('/subjects'),
+  create: (data) => withCacheClear(api.post('/subjects', data)),
+  update: (id, data) => withCacheClear(api.put(`/subjects/${id}`, data)),
+  delete: (id) => withCacheClear(api.delete(`/subjects/${id}`))
 };
 
 export const facultyAPI = {
-  getAll: () => api.get('/faculty'),
-  create: (data) => api.post('/faculty', data),
-  update: (id, data) => api.put(`/faculty/${id}`, data),
-  delete: (id) => api.delete(`/faculty/${id}`)
+  getAll: () => getCached('/faculty'),
+  create: (data) => withCacheClear(api.post('/faculty', data)),
+  update: (id, data) => withCacheClear(api.put(`/faculty/${id}`, data)),
+  delete: (id) => withCacheClear(api.delete(`/faculty/${id}`))
 };
 
 export const timetableAPI = {

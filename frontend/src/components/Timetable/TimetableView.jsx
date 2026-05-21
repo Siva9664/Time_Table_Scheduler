@@ -243,7 +243,7 @@ export default function TimetableView() {
     <div className="space-y-8">
       {selected.schedule_data && Object.values(selected.schedule_data).map((classSchedule) => (
         <div key={classSchedule.class_id} className="card shadow-sm border border-gray-100">
-          <div className="border-b pb-3 mb-4 flex justify-between items-end">
+          <div className="border-b pb-3 mb-4 flex flex-col sm:flex-row justify-between items-start sm:items-end gap-2">
             <div>
               <h3 className="text-xl font-bold text-gray-800">{classSchedule.class_name}</h3>
               <p className="text-sm text-gray-500">{classSchedule.department} • {classSchedule.batch_name}</p>

@@ -4,6 +4,7 @@ import { useToast } from '../../context/ToastContext';
 import { Edit, Trash2 } from 'lucide-react';
 import ConfirmationModal from '../Layout/ConfirmationModal';
 import CsvUploader from '../Layout/CsvUploader';
+import Select from 'react-select';
 
 const FacultyMapping = () => {
     const [subjects, setSubjects] = useState([]);
@@ -93,9 +94,8 @@ const FacultyMapping = () => {
             // Refresh data
             await loadData();
 
-            // Reset form partly
+            // Reset form partly (keep faculty selected)
             setSelectedSubjectId('');
-            setSelectedFacultyId('');
 
             showToast('Mapped successfully!', 'success');
         } catch (err) {
@@ -118,7 +118,10 @@ const FacultyMapping = () => {
         setSelectedFacultyId(sub.faculty_id || '');
 
         // Scroll to top
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+        setTimeout(() => {
+            document.querySelector('.main-content')?.scrollTo({ top: 0, behavior: 'smooth' });
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }, 50);
     };
 
     const handleUnassignClick = (id) => {
@@ -222,10 +225,10 @@ const FacultyMapping = () => {
 
             {/* Top Section: Mapping Form */}
             <div className="bg-white rounded-xl shadow-lg p-6 border border-slate-100">
-                <div className="grid grid-cols-1 md:grid-cols-7 gap-4 items-end">
+                <div className="flex flex-wrap items-end gap-4">
 
                     {/* Batch Select */}
-                    <div>
+                    <div className="flex-1 min-w-[120px]">
                         <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Batch</label>
                         <select
                             className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-slate-50"
@@ -243,7 +246,7 @@ const FacultyMapping = () => {
                     </div>
 
                     {/* Department Select (Added) */}
-                    <div>
+                    <div className="flex-1 min-w-[120px]">
                         <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Department</label>
                         <select
                             className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-slate-50"
@@ -261,7 +264,7 @@ const FacultyMapping = () => {
                     </div>
 
                     {/* Class Select */}
-                    <div>
+                    <div className="flex-1 min-w-[140px]">
                         <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Class</label>
                         <select
                             className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-slate-50"
@@ -281,7 +284,7 @@ const FacultyMapping = () => {
                     </div>
 
                     {/* Subject Select */}
-                    <div>
+                    <div className="flex-1 min-w-[160px]">
                         <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Subject</label>
                         <select
                             className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-slate-50"
@@ -297,39 +300,58 @@ const FacultyMapping = () => {
                     </div>
 
                     {/* Faculty Select — shows ALL faculty across all departments */}
-                    <div>
+                    <div className="flex-[2] min-w-[200px]">
                         <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
-                            Faculty
-                            <span className="ml-1 text-blue-400 normal-case font-normal">(any dept)</span>
+                            Faculty <span className="text-blue-400 normal-case font-normal">(any dept)</span>
                         </label>
-                        <select
-                            className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-slate-50"
-                            value={selectedFacultyId}
-                            onChange={(e) => setSelectedFacultyId(e.target.value)}
-                        >
-                            <option value="">Select Faculty</option>
-                            {availableFaculties.map(f => (
-                                <option key={f.id} value={f.id}>
-                                    {f.name}{f.department_id ? ` (${getDepartmentName(f.department_id)})` : ''}
-                                </option>
-                            ))}
-                        </select>
+                        <Select
+                            options={availableFaculties.map(f => ({
+                                value: f.id,
+                                label: `${f.name}${f.department_id ? ` (${getDepartmentName(f.department_id)})` : ''}`
+                            }))}
+                            value={
+                                selectedFacultyId 
+                                ? { 
+                                    value: selectedFacultyId, 
+                                    label: (() => {
+                                        const f = availableFaculties.find(fac => fac.id === selectedFacultyId);
+                                        return f ? `${f.name}${f.department_id ? ` (${getDepartmentName(f.department_id)})` : ''}` : '';
+                                    })()
+                                  } 
+                                : null
+                            }
+                            onChange={(option) => setSelectedFacultyId(option ? option.value : '')}
+                            isClearable
+                            placeholder="Search..."
+                            styles={{
+                                control: (base) => ({
+                                    ...base,
+                                    minHeight: '40px',
+                                    borderRadius: '0.5rem',
+                                    borderColor: '#e2e8f0',
+                                    backgroundColor: '#f8fafc',
+                                    boxShadow: 'none',
+                                    '&:hover': { borderColor: '#cbd5e1' }
+                                }),
+                                menu: (base) => ({ ...base, zIndex: 50 })
+                            }}
+                        />
                     </div>
 
                     {/* MAP Button */}
-                    <div>
+                    <div className="w-full sm:w-auto">
                         <button
                             onClick={handleMap}
                             disabled={saving}
-                            className="w-full px-6 py-2 bg-slate-400 text-white font-bold rounded-lg hover:bg-slate-500 shadow-lg transition-all duration-200"
-                            style={{ backgroundColor: '#94a3b8' }}
+                            className="w-full px-2 py-2 bg-slate-400 text-white font-bold rounded-lg hover:bg-slate-500 shadow-lg transition-all duration-200"
+                            style={{ backgroundColor: '#94a3b8', height: '40px' }}
                         >
                             {saving ? '...' : 'MAP'}
                         </button>
                     </div>
 
                     {/* CSV Upload Button */}
-                    <div>
+                    <div className="w-full sm:w-auto">
                         <CsvUploader
                             type="mappings"
                             onSuccess={loadData}
@@ -347,7 +369,7 @@ const FacultyMapping = () => {
 
             {/* Bottom Section: Overview Table */}
             <div className="bg-white rounded-xl shadow-lg border border-slate-100">
-                <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+                <div className="p-6 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                     <h2 className="text-lg font-bold text-slate-700">Global Faculty Mapping Overview</h2>
 
                     {/* Search */}

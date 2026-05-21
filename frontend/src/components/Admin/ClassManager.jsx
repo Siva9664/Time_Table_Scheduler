@@ -119,7 +119,7 @@ export default function ClassManager() {
         message="Are you sure you want to delete this class? This action cannot be undone."
       />
 
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
         <h1 className="text-3xl font-bold">Classes</h1>
         <div className="flex gap-2">
           <CsvUploader type="classes" onSuccess={loadData} />

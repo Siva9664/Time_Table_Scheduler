@@ -88,7 +88,7 @@ export default function Dashboard() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-10">
-      <header className="flex justify-between items-end">
+      <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
         <div>
            <h1 className="text-4xl font-black text-slate-800 tracking-tight uppercase">
              {admin ? 'Admin Dashboard' : 'Faculty Dashboard'}
@@ -152,7 +152,7 @@ export default function Dashboard() {
       {/* Recent Activity Section */}
       {admin && (
           <div className="bg-white rounded-3xl p-8 shadow-xl border border-slate-100">
-            <div className="flex justify-between items-center mb-6">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
               <h2 className="text-xl font-extrabold text-slate-700 flex items-center gap-2">
                 <Clock size={24} className="text-primary-500" />
                 Recent System Activity
@@ -166,7 +166,7 @@ export default function Dashboard() {
                 { action: "System maintenance completed", time: "1 day ago", type: "modify" }
               ].map((item, idx) => (
                 <div key={idx} className="flex items-center justify-between p-4 rounded-2xl bg-slate-50 border border-slate-100 hover:bg-slate-100 transition-colors cursor-default">
-                  <div className="flex items-center gap-4">
+                  <div className="flex flex-wrap items-center gap-4">
                     <div className={`w-2 h-2 rounded-full ${item.type === 'system' ? 'bg-blue-500' : 'bg-green-500'}`} />
                     <div>
                       <p className="font-bold text-slate-700 text-sm">{item.action}</p>

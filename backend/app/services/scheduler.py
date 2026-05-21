@@ -221,7 +221,7 @@ class TimetableScheduler:
         candidate = self._normalize_match_text(candidate)
         if not target or not candidate:
             return False
-        if target == candidate or target in candidate or candidate in target:
+        if target == candidate or target in candidate:
             return True
         target_tokens = target.split()
         return bool(target_tokens) and all(token in candidate for token in target_tokens)
@@ -249,6 +249,19 @@ class TimetableScheduler:
     def _subjects_for_target(self, target: str, target_type: str = "subject") -> List[_Obj]:
         if target_type == "class":
             return self._subjects_for_class_target(target)
+            
+        target_norm = self._normalize_match_text(target)
+        if not target_norm:
+            return []
+            
+        # Try exact match first
+        exact_matches = [
+            sub for sub in self.subjects
+            if self._normalize_match_text(sub.name) == target_norm or self._normalize_match_text(sub.code) == target_norm
+        ]
+        if exact_matches:
+            return exact_matches
+            
         return [sub for sub in self.subjects if self._matches_subject(target, sub)]
 
     def _constraint_error(self, message: str):
@@ -742,6 +755,17 @@ class TimetableScheduler:
                 self.model.Add(load_var == sum(day_vars))
                 theory_daily_load.append(load_var)
 
+        penalty_terms = []
+        for sub in self.subjects:
+            c = sub.credits if sub.credits is not None else 3
+            for day in range(self.num_days):
+                for period in range(self.periods_per_day):
+                    key = f"s{sub.id}_d{day}_p{period}"
+                    if key in self.variables:
+                        penalty_terms.append(self.variables[key] * c * period)
+
+        morning_penalty = sum(penalty_terms) if penalty_terms else 0
+
         if len(theory_daily_load) >= 2:
             max_load = self.model.NewIntVar(0, self.periods_per_day * len(self.subjects), "max_load")
             min_load = self.model.NewIntVar(0, self.periods_per_day * len(self.subjects), "min_load")
@@ -749,8 +773,13 @@ class TimetableScheduler:
             self.model.AddMinEquality(min_load, theory_daily_load)
             spread = self.model.NewIntVar(0, self.periods_per_day * len(self.subjects), "spread")
             self.model.Add(spread == max_load - min_load)
-            self.model.Minimize(spread)
-            logger.debug("Added even distribution objective (minimise daily load spread)")
+            
+            # Combine objectives: Prioritize even spread heavily, then morning priority
+            self.model.Minimize(spread * 1000 + morning_penalty)
+            logger.debug("Added even distribution and morning-priority objectives")
+        else:
+            self.model.Minimize(morning_penalty)
+            logger.debug("Added morning-priority objective")
 
     def solve(self) -> Dict[str, Any]:
         logger.info(f"Step 4/5: Solving model (Time Limit: {self.time_limit_seconds}s)...")

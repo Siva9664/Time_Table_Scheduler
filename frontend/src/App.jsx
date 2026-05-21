@@ -20,7 +20,7 @@ function App() {
     return (
       <div className="flex h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
         <Sidebar />
-        <div className="flex-1 main-content p-8 overflow-y-auto h-full relative">
+        <div className="flex-1 main-content p-4 sm:p-6 md:p-8 overflow-y-auto h-full relative">
           <div key={location.pathname} className="max-w-6xl mx-auto animate-page">
             <Outlet />
           </div>
