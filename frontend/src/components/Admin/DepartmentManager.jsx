@@ -46,6 +46,9 @@ export default function DepartmentManager() {
     setValue('name', dept.name);
     setValue('code', dept.code);
     setShowForm(true);
+    setTimeout(() => {
+        document.querySelector('.main-content')?.scrollTo({ top: 0, behavior: 'smooth' });
+    }, 50);
   };
 
   const onSubmit = async (data) => {

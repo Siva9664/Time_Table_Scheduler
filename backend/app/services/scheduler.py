@@ -692,6 +692,31 @@ class TimetableScheduler:
                 else:
                     self._constraint_error(f"class_gap: class '{cls_name}' not found in loaded data")
 
+            # ── specific_time_slot ─────────────────────────────────────────────
+            elif c_type == "specific_time_slot":
+                target = str(constraint.get("target", ""))
+                target_type = str(constraint.get("target_type", "subject")).lower()
+                period_num = constraint.get("period")
+                if period_num is not None:
+                    p_idx = int(period_num) - 1
+                    day_name = constraint.get("day")
+                    matched_subjects = self._subjects_for_target(target, target_type)
+                    for sub in matched_subjects:
+                        sub_vars = []
+                        for day_idx in range(self.num_days):
+                            if day_name and self.working_days[day_idx].lower() != day_name.lower():
+                                continue
+                            if 0 <= p_idx < self.periods_per_day:
+                                key = f"s{sub.id}_d{day_idx}_p{p_idx}"
+                                if key in self.variables:
+                                    sub_vars.append(self.variables[key])
+                        if sub_vars:
+                            self.model.Add(sum(sub_vars) >= 1)
+                    if matched_subjects:
+                        logger.debug(f"Applied specific_time_slot for '{target}' ({target_type}, period={period_num}, day={day_name})")
+                    else:
+                        self._constraint_error(f"specific_time_slot: target '{target}' ({target_type}) not found in loaded data")
+
             else:
                 self._constraint_error(f"Unsupported AI constraint type: '{c_type}'")
 
@@ -867,14 +892,94 @@ class TimetableScheduler:
 
         return errors
 
+    def _auto_assign_faculty_to_unassigned_subjects(self) -> Tuple[List[Tuple[_Obj, str]], List[_Obj]]:
+        """
+        Greedy in-memory assignment of faculty to subjects that lack a `faculty_id`.
+        Respects faculty `max_hours_per_week` and basic availability estimation.
+        Returns: (auto_assigned list of (subject, faculty_name), failed_subjects list)
+        """
+        auto_assigned = []
+        failed = []
+
+        # Build faculty pools by department
+        fac_by_dept = {}
+        assigned_hours = {}
+        for f in self.faculty:
+            dep = getattr(f, 'department_id', None)
+            fac_by_dept.setdefault(dep, []).append(f)
+            assigned_hours[self._id_str(f.id)] = 0
+
+        # Count already assigned hours for faculties
+        for s in self.subjects:
+            if s.faculty_id:
+                fid = self._id_str(s.faculty_id)
+                assigned_hours[fid] = assigned_hours.get(fid, 0) + (s.hours_per_week or 0)
+
+        # Subjects that need faculty
+        unassigned = [s for s in self.subjects if not s.faculty_id]
+        # Sort by hours desc to assign heavy subjects first
+        unassigned.sort(key=lambda x: -(x.hours_per_week or 0))
+
+        for subj in unassigned:
+            # Prefer faculty from same department of the subject's class
+            class_obj = self.class_map.get(self._id_str(subj.class_id))
+            preferred_dept = None
+            if class_obj:
+                preferred_dept = getattr(class_obj, 'department_id', None)
+
+            candidates = []
+            if preferred_dept in fac_by_dept:
+                candidates = fac_by_dept[preferred_dept][:]
+            else:
+                # fallback to any faculty
+                candidates = [f for f in self.faculty]
+
+            # Filter by capacity (max_hours)
+            viable = []
+            need = subj.hours_per_week or 0
+            for f in candidates:
+                fid = self._id_str(f.id)
+                max_h = getattr(f, 'max_hours_per_week', None) or 0
+                if assigned_hours.get(fid, 0) + need <= max_h:
+                    # Basic availability check: count potential slots across class timelines
+                    # Estimate available slots as total class slots minus faculty unavailability overlaps
+                    total_potential = 0
+                    # For subjects mapped to a class, calculate available period slots for that class
+                    if subj.class_id and subj.class_id in self.class_map:
+                        cls = self.class_map[self._id_str(subj.class_id)]
+                        intervals = self._get_class_period_intervals(cls)
+                        for day_idx, day_name in enumerate(self.working_days):
+                            for p_idx, (start, end) in enumerate(intervals):
+                                if not self._is_faculty_unavailable(f, day_idx, day_name, p_idx, start, end):
+                                    total_potential += 1
+                    else:
+                        # conservatively allow
+                        total_potential = need
+
+                    if total_potential >= need:
+                        viable.append((f, max_h - assigned_hours.get(fid, 0)))
+
+            if not viable:
+                failed.append(subj)
+                continue
+
+            # pick candidate with largest remaining capacity
+            viable.sort(key=lambda x: -x[1])
+            chosen = viable[0][0]
+            # assign in-memory
+            subj._doc['faculty_id'] = ObjectId(chosen.id) if ObjectId.is_valid(chosen.id) else chosen.id
+            assigned_hours[self._id_str(chosen.id)] = assigned_hours.get(self._id_str(chosen.id), 0) + need
+            auto_assigned.append((subj, chosen.name, self._id_str(chosen.id)))
+
+        return auto_assigned, failed
+
     def generate_schedule(self, department_ids: Optional[List[str]] = None, batch_ids: Optional[List[str]] = None, class_ids: Optional[List[str]] = None, faculty_ids: Optional[List[str]] = None) -> Dict[str, Any]:
         data_summary = self.load_data(department_ids, batch_ids, class_ids, faculty_ids)
         self._sync_periods_per_day_to_batch_timings()
         if not self.classes or not self.subjects:
             msg = "No classes found." if not self.classes else "Found Classes, but NO Subjects are assigned to them.\nHint: Go to 'Mapping' and assign your Global Subjects to these Classes."
             return {"status": "ERROR", "message": msg, "data_summary": data_summary}
-
-        # VALIDATION: Ensure every subject has a Faculty and Class mapped
+        # VALIDATION: Ensure every subject has a Class mapped; try to auto-assign Faculty where missing.
         missing_mappings = []
         for sub in self.subjects:
             issues = []
@@ -883,10 +988,30 @@ class TimetableScheduler:
             if not sub.faculty_id:
                 issues.append("Missing Faculty")
             if issues:
-                missing_mappings.append(f"{sub.name} ({sub.code}): {', '.join(issues)}")
+                missing_mappings.append((sub, issues))
 
-        if missing_mappings:
-            logger.warning(f"Data Mapping Warning:\n" + "\n".join(missing_mappings))
+        # If some subjects are missing faculty, attempt an in-memory auto-assignment.
+        if any("Missing Faculty" in issues for _, issues in missing_mappings):
+            auto_assigned, failed = self._auto_assign_faculty_to_unassigned_subjects()
+            if auto_assigned:
+                logger.info(f"Auto-assigned faculty for {len(auto_assigned)} subjects")
+                # Update data_summary with info
+                data_summary["auto_assigned_subjects"] = [f"{s.name} -> {f_name}" for s, f_name, _ in auto_assigned]
+                # Persist assignments to DB so mappings appear in UI
+                for subj, _, fac_id in auto_assigned:
+                    try:
+                        sid = ObjectId(subj.id) if ObjectId.is_valid(subj.id) else subj.id
+                        fid = ObjectId(fac_id) if ObjectId.is_valid(fac_id) else fac_id
+                        self.db["subjects"].update_one({"_id": sid}, {"$set": {"faculty_id": fid}})
+                    except Exception:
+                        logger.exception(f"Failed to persist auto-assignment for subject {subj.id}")
+
+            if failed:
+                # Build clear error list for subjects still lacking mapping
+                missing_list = [f"{s.name} ({s.code}): Missing Faculty" for s in failed]
+                msg = "Could not auto-assign faculty for the following subjects. Please assign faculty manually before generating a timetable:\n" + "\n".join(missing_list)
+                logger.warning(msg)
+                return {"status": "ERROR", "message": msg, "data_summary": data_summary}
 
         # VALIDATION 2: Class Workload vs Available Slots
         overloaded_classes = []

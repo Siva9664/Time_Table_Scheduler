@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { timetableAPI } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
 import ConfirmationModal from '../Layout/ConfirmationModal';
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
 
 export default function TimetableView() {
   const [timetables, setTimetables] = useState([]);
@@ -54,51 +56,76 @@ export default function TimetableView() {
   };
 
   // --- DOWNLOAD HANDLER ---
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (!selected) return;
-    const printWindow = window.open('', '_blank');
 
-    const buildClassTables = () => {
-      if (!selected.schedule_data) return '';
-      return Object.values(selected.schedule_data).map(cs => {
-        const firstDay = Object.keys(cs.timetable)[0];
-        const headers = cs.timetable[firstDay].map(slot => {
-          const isBreak = slot.slot_type === 'break';
-          const label = isBreak ? (slot.label || 'Break') : `Period ${slot.period}`;
-          return `<th style="padding:8px 12px;background:${isBreak ? '#fff7ed' : '#f3f4f6'};border:1px solid #d1d5db;min-width:${isBreak ? '110px' : '130px'};text-align:center;font-size:11px;">
-            <div style="font-weight:700;text-transform:uppercase;color:${isBreak ? '#9a3412' : '#374151'};">${label}</div>
-            <div style="color:#9ca3af;font-family:monospace;font-size:10px;margin-top:2px;">${slot.time}</div>
-          </th>`;
-        }).join('');
+    showToast("Generating PDF... Please wait.", "info");
 
-        const rows = Object.entries(cs.timetable).map(([day, periods]) => {
-          const cells = periods.map(slot => {
-            if (slot.slot_type === 'break') {
-              return `<td style="padding:8px;border:1px solid #d1d5db;text-align:center;background:#fffbeb;color:#92400e;font-size:12px;font-weight:700;text-transform:uppercase;">${slot.label || 'Break'}</td>`;
-            }
-            if (!slot.subject) return `<td style="padding:8px;border:1px solid #d1d5db;text-align:center;color:#d1d5db;font-size:11px;font-style:italic;">Free</td>`;
-            const bg = slot.is_lab ? '#eff6ff' : '#f0fdf4';
-            const border = slot.is_lab ? '#bfdbfe' : '#bbf7d0';
-            const color = slot.is_lab ? '#1e3a8a' : '#14532d';
-            return `<td style="padding:6px;border:1px solid #d1d5db;vertical-align:top;">
-              <div style="background:${bg};border:1px solid ${border};color:${color};border-radius:6px;padding:6px;height:100%;min-height:80px;">
-                <div style="font-weight:700;font-size:12px;">${slot.subject}</div>
-                <div style="font-size:10px;opacity:0.7;margin-top:2px;">${slot.subject_code || ''}</div>
-                <div style="font-size:11px;margin-top:6px;padding-top:4px;border-top:1px solid rgba(0,0,0,0.08);">👤 ${slot.faculty}</div>
-              </div>
-            </td>`;
+    const pdf = new jsPDF('landscape', 'pt', 'a4');
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const margin = 20;
+    const availableWidth = pageWidth - (margin * 2);
+
+    // Create a hidden container in the DOM
+    const wrapper = document.createElement('div');
+    wrapper.style.position = 'absolute';
+    wrapper.style.left = '-9999px';
+    wrapper.style.top = '0';
+    wrapper.style.width = 'max-content';
+    wrapper.style.display = 'inline-block';
+    wrapper.style.padding = '20px';
+    wrapper.style.fontFamily = "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+    wrapper.style.color = '#111827';
+    wrapper.style.background = '#ffffff';
+    document.body.appendChild(wrapper);
+
+    try {
+      const pagesHTML = [];
+
+      // 1. Build Class Pages
+      if (selected.schedule_data) {
+        Object.values(selected.schedule_data).forEach(cs => {
+          const firstDay = Object.keys(cs.timetable)[0];
+          const headers = cs.timetable[firstDay].map(slot => {
+            const isBreak = slot.slot_type === 'break';
+            const label = isBreak ? (slot.label || 'Break') : `Period ${slot.period}`;
+            return `<th style="padding:8px 12px;background:${isBreak ? '#fff7ed' : '#f3f4f6'};border:1px solid #d1d5db;min-width:${isBreak ? '110px' : '130px'};text-align:center;font-size:11px;">
+              <div style="font-weight:700;text-transform:uppercase;color:${isBreak ? '#9a3412' : '#374151'};">${label}</div>
+              <div style="color:#9ca3af;font-family:monospace;font-size:10px;margin-top:2px;">${slot.time}</div>
+            </th>`;
           }).join('');
-          return `<tr>
-            <td style="padding:10px 14px;border:1px solid #d1d5db;font-weight:600;color:#374151;background:#f9fafb;white-space:nowrap;">${day}</td>
-            ${cells}
-          </tr>`;
-        }).join('');
 
-        return `
-          <div style="margin-bottom:40px;page-break-inside:avoid;">
-            <h3 style="font-size:17px;font-weight:700;color:#111827;margin-bottom:4px;">${cs.class_name}</h3>
-            <p style="font-size:13px;color:#6b7280;margin-bottom:12px;">${cs.department} • ${cs.batch_name}</p>
-            <div style="overflow-x:auto;">
+          const rows = Object.entries(cs.timetable).map(([day, periods]) => {
+            const cells = periods.map(slot => {
+              if (slot.slot_type === 'break') {
+                return `<td style="padding:8px;border:1px solid #d1d5db;text-align:center;background:#fffbeb;color:#92400e;font-size:12px;font-weight:700;text-transform:uppercase;">${slot.label || 'Break'}</td>`;
+              }
+              if (!slot.subject) return `<td style="padding:8px;border:1px solid #d1d5db;text-align:center;color:#d1d5db;font-size:11px;font-style:italic;">Free</td>`;
+              const bg = slot.is_lab ? '#eff6ff' : '#f0fdf4';
+              const border = slot.is_lab ? '#bfdbfe' : '#bbf7d0';
+              const color = slot.is_lab ? '#1e3a8a' : '#14532d';
+              return `<td style="padding:6px;border:1px solid #d1d5db;vertical-align:top;">
+                <div style="background:${bg};border:1px solid ${border};color:${color};border-radius:6px;padding:6px;height:100%;min-height:80px;">
+                  <div style="font-weight:700;font-size:12px;">${slot.subject}</div>
+                  <div style="font-size:10px;opacity:0.7;margin-top:2px;">${slot.subject_code || ''}</div>
+                  <div style="font-size:11px;margin-top:6px;padding-top:4px;border-top:1px solid rgba(0,0,0,0.08);">👤 ${slot.faculty}</div>
+                </div>
+              </td>`;
+            }).join('');
+            return `<tr>
+              <td style="padding:10px 14px;border:1px solid #d1d5db;font-weight:600;color:#374151;background:#f9fafb;white-space:nowrap;">${day}</td>
+              ${cells}
+            </tr>`;
+          }).join('');
+
+          pagesHTML.push(`
+            <div>
+              <div style="margin-bottom:20px;">
+                <h1 style="font-size:22px;font-weight:800;margin-bottom:4px;color:#111827;">${selected.name} <span style="font-size:14px;font-weight:400;color:#6b7280;margin-left:12px;">(Class View)</span></h1>
+                <h3 style="font-size:17px;font-weight:700;color:#111827;margin-bottom:4px;">${cs.class_name}</h3>
+                <p style="font-size:13px;color:#6b7280;">${cs.department} • ${cs.batch_name}</p>
+              </div>
               <table style="border-collapse:collapse;width:100%;">
                 <thead><tr>
                   <th style="padding:8px 14px;background:#f3f4f6;border:1px solid #d1d5db;text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;color:#6b7280;">Day</th>
@@ -107,35 +134,78 @@ export default function TimetableView() {
                 <tbody>${rows}</tbody>
               </table>
             </div>
-          </div>`;
-      }).join('');
-    };
+          `);
+        });
+      }
 
-    const html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>${selected.name} - Timetable</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 32px; color: #111827; }
-    h1 { font-size: 22px; font-weight: 800; margin-bottom: 4px; }
-    .meta { font-size: 13px; color: #6b7280; margin-bottom: 8px; }
-    .status { display: inline-block; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; background: #dcfce7; color: #166534; margin-bottom: 28px; }
-    @media print { body { padding: 16px; } }
-  </style>
-</head>
-<body>
-  <h1>${selected.name}</h1>
-  <p class="meta">${selected.academic_year || ''} • Semester ${selected.semester || ''}</p>
-  <span class="status">${selected.solver_status}</span>
-  ${buildClassTables()}
-  <script>window.onload = () => { window.print(); }<\/script>
-</body>
-</html>`;
+      // 2. Build Faculty Pages
+      const facData = getFacultySchedule(selected.schedule_data);
+      if (facData) {
+        Object.entries(facData).sort().forEach(([facultyName, schedule]) => {
+          const rows = Object.entries(schedule).map(([day, slots]) => {
+            const cellsHtml = slots.sort((a,b) => a.period - b.period).map(slot => `
+              <div style="display:inline-block;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:8px;min-width:180px;margin-right:8px;margin-bottom:8px;">
+                <div style="font-size:11px;font-family:monospace;color:#9ca3af;margin-bottom:4px;">${slot.time} (P${slot.period})</div>
+                <div style="font-weight:700;font-size:13px;color:#2563eb;">${slot.class_name}</div>
+                <div style="font-size:12px;color:#4b5563;">${slot.subject}</div>
+              </div>
+            `).join('');
+            
+            return `<tr>
+              <td style="padding:10px 14px;border:1px solid #d1d5db;font-weight:600;color:#374151;background:#f9fafb;white-space:nowrap;vertical-align:top;">${day}</td>
+              <td style="padding:10px;border:1px solid #d1d5db;">
+                ${cellsHtml}
+              </td>
+            </tr>`;
+          }).join('');
 
-    printWindow.document.write(html);
-    printWindow.document.close();
+          pagesHTML.push(`
+            <div>
+              <div style="margin-bottom:20px;">
+                <h1 style="font-size:22px;font-weight:800;margin-bottom:4px;color:#111827;">${selected.name} <span style="font-size:14px;font-weight:400;color:#6b7280;margin-left:12px;">(Faculty View)</span></h1>
+                <h3 style="font-size:18px;font-weight:700;color:#111827;margin-bottom:4px;">👤 ${facultyName}</h3>
+              </div>
+              <table style="border-collapse:collapse;width:100%;">
+                <thead><tr>
+                  <th style="padding:8px 14px;background:#f3f4f6;border:1px solid #d1d5db;text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;color:#6b7280;width:90px;">Day</th>
+                  <th style="padding:8px 14px;background:#f3f4f6;border:1px solid #d1d5db;text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;color:#6b7280;">Schedule</th>
+                </tr></thead>
+                <tbody>${rows}</tbody>
+              </table>
+            </div>
+          `);
+        });
+      }
+
+      // 3. Render each page sequentially
+      for (let i = 0; i < pagesHTML.length; i++) {
+        wrapper.innerHTML = pagesHTML[i];
+        
+        const canvas = await html2canvas(wrapper, { 
+          scale: 2, 
+          useCORS: true,
+          logging: false,
+          windowWidth: wrapper.scrollWidth,
+          width: wrapper.scrollWidth
+        });
+        
+        const imgData = canvas.toDataURL('image/jpeg', 0.98);
+        const imgWidth = availableWidth;
+        const imgHeight = (canvas.height * availableWidth) / canvas.width;
+
+        if (i > 0) pdf.addPage();
+        pdf.addImage(imgData, 'JPEG', margin, margin, imgWidth, imgHeight);
+      }
+
+      pdf.save(`${selected.name.replace(/[^a-z0-9]/gi, '_')} - Full Schedule.pdf`);
+      showToast("PDF downloaded successfully!", "success");
+
+    } catch (err) {
+      console.error("PDF generation failed", err);
+      showToast("Failed to generate PDF", "error");
+    } finally {
+      document.body.removeChild(wrapper);
+    }
   };
 
   // --- DATA PIVOTING HELPERS ---

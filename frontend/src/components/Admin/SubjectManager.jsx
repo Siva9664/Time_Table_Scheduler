@@ -55,6 +55,9 @@ export default function SubjectManager() {
     setValue('hours_per_week', sub.hours_per_week);
     setValue('requires_lab', sub.requires_lab ? 'true' : 'false');
     setShowForm(true);
+    setTimeout(() => {
+        document.querySelector('.main-content')?.scrollTo({ top: 0, behavior: 'smooth' });
+    }, 50);
   };
 
   const onSubmit = async (data) => {

@@ -37,6 +37,13 @@ export default function BatchManager() {
         loadBatches();
     }, []);
 
+    // Breaks state: array of { start, start_ampm, end, end_ampm }
+    const [breaks, setBreaks] = useState([]);
+
+    const addBreakRow = () => setBreaks(prev => [...prev, { start: '', start_ampm: 'AM', end: '', end_ampm: 'AM' }]);
+    const removeBreakRow = (idx) => setBreaks(prev => prev.filter((_, i) => i !== idx));
+    const updateBreakRow = (idx, field, value) => setBreaks(prev => prev.map((b, i) => i === idx ? { ...b, [field]: value } : b));
+
     const handleEdit = (batch) => {
         setEditData(batch);
         setValue('name', batch.name);
@@ -53,29 +60,58 @@ export default function BatchManager() {
         }
 
         if (batch.break_times) {
-            const text = batch.break_times.map(b => `${b.start}-${b.end}`).join('\n');
-            setValue('breaks_text', text);
+            // Populate structured breaks state (convert 24h -> 12h with AM/PM for editing)
+            const parsed = batch.break_times.map(b => {
+                const start = b.start || '';
+                const end = b.end || '';
+                const toAmpm = (t) => {
+                    if (!t) return { time: '', ampm: 'AM' };
+                    const [hh, mm] = t.split(':').map(Number);
+                    const ampm = hh >= 12 ? 'PM' : 'AM';
+                    const hour12 = ((hh + 11) % 12) + 1;
+                    const pad = (n) => String(n).padStart(2, '0');
+                    return { time: `${pad(hour12)}:${pad(mm)}`, ampm };
+                };
+                const s = toAmpm(start);
+                const e = toAmpm(end);
+                return { start: s.time, start_ampm: s.ampm, end: e.time, end_ampm: e.ampm };
+            });
+            setBreaks(parsed);
         } else {
-            setValue('breaks_text', '');
+            setBreaks([]);
         }
 
         setShowForm(true);
+    setTimeout(() => {
+        document.querySelector('.main-content')?.scrollTo({ top: 0, behavior: 'smooth' });
+    }, 50);
     };
 
     const onSubmit = async (data) => {
         try {
-            // Parse breaks from textarea (line separated HH:MM-HH:MM)
-            const breaks = data.breaks_text.split('\n').filter(line => line.includes('-')).map(line => {
-                const [start, end] = line.split('-').map(s => s.trim());
-                return { start, end };
-            });
+            // Build breaks payload from structured `breaks` state (convert 12h->24h using AM/PM)
+            const to24 = (time, ampm) => {
+                if (!time) return '';
+                const [hh, mm] = time.split(':').map(Number);
+                let h = hh % 12;
+                if (ampm === 'PM') h += 12;
+                const pad = (n) => String(n).padStart(2, '0');
+                return `${pad(h)}:${pad(mm)}`;
+            };
+
+            const parsedBreaks = (breaks && breaks.length > 0)
+                ? breaks.filter(b => b.start && b.end).map(b => ({ start: to24(b.start, b.start_ampm), end: to24(b.end, b.end_ampm) }))
+                : (data.breaks_text ? data.breaks_text.split('\n').filter(line => line.includes('-')).map(line => {
+                    const [start, end] = line.split('-').map(s => s.trim());
+                    return { start, end };
+                }) : []);
 
             const payload = {
                 name: data.name,
                 start_time: data.start_time,
                 end_time: data.end_time,
                 period_duration: parseInt(data.period_duration),
-                break_times: breaks,
+                break_times: parsedBreaks,
                 lunch_break: data.lunch_start && data.lunch_end ? { start: data.lunch_start, end: data.lunch_end } : {}
             };
 
@@ -91,6 +127,7 @@ export default function BatchManager() {
             setEditData(null);
             setShowForm(false);
             clearCache();
+            setBreaks([]);
             loadBatches();
         } catch (error) {
             showToast("Failed to save batch: " + error.message, "error");
@@ -127,8 +164,19 @@ export default function BatchManager() {
                 <h1 className="text-3xl font-bold">Batch Configurations</h1>
                 <button
                     onClick={() => {
-                        setEditData(null);
-                        setShowForm(!showForm);
+                        // If opening the form for a new batch, clear previous state and cache
+                        if (!showForm) {
+                            setEditData(null);
+                            reset();
+                            clearCache();
+                            setBreaks([]);
+                            setShowForm(true);
+    setTimeout(() => {
+        document.querySelector('.main-content')?.scrollTo({ top: 0, behavior: 'smooth' });
+    }, 50);
+                            return;
+                        }
+                        setShowForm(false);
                     }}
                     className="btn btn-primary flex items-center gap-2"
                 >
@@ -156,8 +204,34 @@ export default function BatchManager() {
                         </div>
 
                         <div>
-                            <label className="block text-sm font-medium mb-1">Breaks (One per line: HH:MM-HH:MM)</label>
-                            <textarea {...register('breaks_text')} className="input w-full border rounded p-2 h-24 font-mono text-sm" placeholder="10:30-10:45&#10;15:00-15:15"></textarea>
+                            <label className="block text-sm font-medium mb-1">Breaks</label>
+                            <div className="space-y-2">
+                                {breaks.map((b, idx) => (
+                                    <div key={idx} className="grid grid-cols-4 gap-2 items-center">
+                                        <input type="time" value={b.start} onChange={(e) => updateBreakRow(idx, 'start', e.target.value)} className="input p-2" />
+                                        <select value={b.start_ampm} onChange={(e) => updateBreakRow(idx, 'start_ampm', e.target.value)} className="input p-2">
+                                            <option>AM</option>
+                                            <option>PM</option>
+                                        </select>
+                                        <input type="time" value={b.end} onChange={(e) => updateBreakRow(idx, 'end', e.target.value)} className="input p-2" />
+                                        <select value={b.end_ampm} onChange={(e) => updateBreakRow(idx, 'end_ampm', e.target.value)} className="input p-2">
+                                            <option>AM</option>
+                                            <option>PM</option>
+                                        </select>
+                                        <div className="col-span-4 flex justify-end">
+                                            <button type="button" onClick={() => removeBreakRow(idx)} className="btn btn-secondary ml-2">Remove</button>
+                                        </div>
+                                    </div>
+                                ))}
+                                <div className="flex gap-2">
+                                    <button type="button" onClick={addBreakRow} className="btn btn-outline">Add Break</button>
+                                    <span className="text-sm text-gray-500 self-center">Enter start/end times and select AM/PM for each break (optional).</span>
+                                </div>
+                                <div className="pt-2">
+                                    <label className="block text-sm font-medium mb-1">Or paste legacy breaks (one per line HH:MM-HH:MM)</label>
+                                    <textarea {...register('breaks_text')} className="input w-full border rounded p-2 h-20 font-mono text-sm" placeholder="10:30-10:45\n15:00-15:15"></textarea>
+                                </div>
+                            </div>
                         </div>
 
                         <div className="flex justify-end gap-2">

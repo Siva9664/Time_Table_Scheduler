@@ -14,8 +14,9 @@ export default function FacultyManager() {
   const [showForm, setShowForm] = useState(false);
   const [editData, setEditData] = useState(null);
   const [activeTab, setActiveTab] = useState('resources'); // 'resources' | 'accounts'
-  const { register, handleSubmit, reset, setValue, watch } = useForm();
+  const { register, handleSubmit, reset, setValue, watch, formState: { errors, isSubmitting } } = useForm();
   const { showToast } = useToast();
+  const [serverError, setServerError] = useState('');
 
   // Modal State
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -66,11 +67,16 @@ export default function FacultyManager() {
     setValue('email', facultyMember.email);
     setValue('department_id', facultyMember.department_id);
     setValue('max_hours_per_week', facultyMember.max_hours_per_week);
+    setServerError('');
     setShowForm(true);
+    setTimeout(() => {
+        document.querySelector('.main-content')?.scrollTo({ top: 0, behavior: 'smooth' });
+    }, 50);
   };
 
   const onSubmit = async (data) => {
     try {
+      setServerError('');
       const payload = {
         ...data,
         department_id: data.department_id || null,
@@ -90,11 +96,23 @@ export default function FacultyManager() {
       setEditData(null);
       setShowForm(false);
       clearCache();
+      setServerError('');
       loadData();
     } catch (error) {
-      showToast(error.response?.data?.detail || 'Failed to save faculty', 'error');
+      const msg = error?.response?.data?.detail || error?.message || 'Failed to save faculty';
+      setServerError(msg);
+      showToast(msg, 'error');
     }
   };
+
+  // Focus first field with validation error for better UX
+  useEffect(() => {
+    if (errors && Object.keys(errors).length > 0) {
+      const first = Object.keys(errors)[0];
+      const el = document.querySelector(`[name="${first}"]`);
+      if (el && typeof el.focus === 'function') el.focus();
+    }
+  }, [errors]);
 
   return (
     <div>
@@ -145,10 +163,26 @@ export default function FacultyManager() {
         <div className="card mb-6">
           <h2 className="text-xl font-bold mb-4">{editData ? 'Edit Faculty' : 'Add New Faculty'}</h2>
           <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-            <div><label className="block text-sm font-medium mb-2">Name *</label><input {...register('name', { required: true })} className="input" /></div>
-            <div><label className="block text-sm font-medium mb-2">Email *</label><input {...register('email', { required: true })} type="email" className="input" /></div>
-            <div><label className="block text-sm font-medium mb-2">Department *</label><select {...register('department_id', { required: true })} className="input"><option value="">Select</option>{departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></div>
-            <div><label className="block text-sm font-medium mb-2">Max Hours/Week</label><input {...register('max_hours_per_week')} type="number" defaultValue="20" className="input" /></div>
+            <div>
+              <label className="block text-sm font-medium mb-2">Name *</label>
+              <input {...register('name', { required: 'Name is required' })} className="input" />
+              {errors.name && <p className="text-red-500 text-sm mt-1">{errors.name.message}</p>}
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">Email *</label>
+              <input {...register('email', { required: 'Email is required', pattern: { value: /^[^\s@]+@[^\s@]+\.[^\s@]+$/, message: 'Enter a valid email' } })} type="email" className="input" />
+              {errors.email && <p className="text-red-500 text-sm mt-1">{errors.email.message}</p>}
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">Department *</label>
+              <select {...register('department_id', { required: 'Department is required' })} className="input"><option value="">Select</option>{departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select>
+              {errors.department_id && <p className="text-red-500 text-sm mt-1">{errors.department_id.message}</p>}
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">Max Hours/Week</label>
+              <input {...register('max_hours_per_week', { valueAsNumber: true, min: { value: 0, message: 'Must be 0 or more' } })} type="number" defaultValue="20" className="input" />
+              {errors.max_hours_per_week && <p className="text-red-500 text-sm mt-1">{errors.max_hours_per_week.message}</p>}
+            </div>
             <div className="flex justify-end gap-2">
               <button
                 type="button"
@@ -161,9 +195,19 @@ export default function FacultyManager() {
               >
                 Cancel
               </button>
-              <button type="submit" className="btn btn-primary">{editData ? 'Update' : 'Add'}</button>
+              <button type="submit" disabled={isSubmitting} className="btn btn-primary">{isSubmitting ? (editData ? 'Updating...' : 'Adding...') : (editData ? 'Update' : 'Add')}</button>
             </div>
           </form>
+          {serverError && (
+            <div className="mt-3 p-3 bg-red-50 border border-red-200 text-sm text-red-700 rounded">
+              <div><strong>Oops — could not save faculty:</strong></div>
+              <div className="mt-1">{serverError}</div>
+              <div className="mt-2 flex gap-2">
+                <button onClick={() => setServerError('')} className="btn btn-secondary">Dismiss</button>
+                <button onClick={() => document.querySelector('form')?.scrollIntoView({ behavior: 'smooth' })} className="btn btn-outline">Review form</button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

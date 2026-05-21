@@ -169,7 +169,34 @@ def delete_subject(id: str, db: Database = Depends(get_tenant_db), current_user:
 
 @router.post("/faculty", response_model=FacultyResponse)
 def create_faculty(fac: FacultyCreate, db: Database = Depends(get_tenant_db), current_user: dict = Depends(get_admin_user)):
-    doc = {**fac.dict(), "created_at": datetime.utcnow()}
+    # Defensive validation: ensure types and shapes to avoid downstream constraint/parser errors
+    payload = fac.dict()
+    try:
+        # max_hours_per_week must be an int >= 0
+        max_h = int(payload.get("max_hours_per_week", 0))
+        if max_h < 0:
+            raise ValueError("max_hours_per_week must be non-negative")
+        payload["max_hours_per_week"] = max_h
+
+        # unavailable_slots must be a list of dicts (optional)
+        us = payload.get("unavailable_slots", []) or []
+        if not isinstance(us, list):
+            raise ValueError("unavailable_slots must be a list")
+        # shallow validation of each slot
+        for s in us:
+            if not isinstance(s, dict):
+                raise ValueError("each unavailable slot must be an object")
+            # optional keys: day, start, end
+            # ensure start/end are strings if present
+            for k in ("start", "end"):
+                if k in s and s[k] is not None and not isinstance(s[k], str):
+                    raise ValueError(f"unavailable_slots.{k} must be a string in HH:MM form")
+
+        payload["unavailable_slots"] = us
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid faculty data: {e}")
+
+    doc = {**payload, "created_at": datetime.utcnow()}
     result = db["faculty"].insert_one(doc)
     return faculty_helper(db["faculty"].find_one({"_id": result.inserted_id}))
 
@@ -190,6 +217,28 @@ def update_faculty(id: str, fac: FacultyUpdate, db: Database = Depends(get_tenan
     update_data = {k: v for k, v in fac.dict(exclude_unset=True).items()}
     if not update_data:
         raise HTTPException(status_code=400, detail="No fields to update")
+
+    # Validate updated fields similarly to create
+    if "max_hours_per_week" in update_data:
+        try:
+            mh = int(update_data["max_hours_per_week"]) if update_data["max_hours_per_week"] is not None else None
+            if mh is not None and mh < 0:
+                raise ValueError("max_hours_per_week must be non-negative")
+            update_data["max_hours_per_week"] = mh
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid max_hours_per_week: {e}")
+
+    if "unavailable_slots" in update_data:
+        us = update_data["unavailable_slots"] or []
+        if not isinstance(us, list):
+            raise HTTPException(status_code=400, detail="unavailable_slots must be a list")
+        for s in us:
+            if not isinstance(s, dict):
+                raise HTTPException(status_code=400, detail="each unavailable slot must be an object")
+            for k in ("start", "end"):
+                if k in s and s[k] is not None and not isinstance(s[k], str):
+                    raise HTTPException(status_code=400, detail=f"unavailable_slots.{k} must be a string")
+
     result = db["faculty"].update_one({"_id": _oid(id)}, {"$set": update_data})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Not found")

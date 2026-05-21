@@ -1,6 +1,7 @@
 import json
 import re
 from typing import List, Dict, Any, Optional
+from openai import OpenAI
 
 
 class AIConstraintParser:
@@ -24,6 +25,7 @@ class AIConstraintParser:
         "preferred_time_slot",
         "avoid_time_slot",
         "class_gap",
+        "specific_time_slot",
     ]
 
     def __init__(
@@ -142,6 +144,13 @@ A class must have at least N free periods between two sessions.
 {{"type": "class_gap", "class_name": "CSE-A", "min_gap": 1}}
 ```
 
+### 8. specific_time_slot
+Force a subject or class into an exact day and/or period number.
+```json
+{{"type": "specific_time_slot", "target": "Physics", "target_type": "subject", "day": "Monday", "period": 2}}
+```
+If the day is not mentioned, omit the `day` field.
+
 ## Rules
 - Always match names exactly to the available data context above (use the closest match).
 - Map all day names to full English: Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday.
@@ -174,7 +183,6 @@ Output: {{"constraints": [{{"type": "faculty_availability", "faculty_name": "Pro
         if not self.model:
             raise RuntimeError("AI_MODEL is required for AI parsing")
 
-        from openai import OpenAI
         client = OpenAI(
             api_key=self.api_key,
             base_url=self.api_base,
@@ -198,7 +206,7 @@ Output: {{"constraints": [{{"type": "faculty_availability", "faculty_name": "Pro
 
     def _supports_json_mode(self) -> bool:
         """Only certain models support response_format=json_object."""
-        supported = {"gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-4o-mini"}
+        supported = {"gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-4o-mini", "llama", "mixtral", "gemma"}
         return any(s in (self.model or "").lower() for s in supported)
 
     @staticmethod
@@ -510,6 +518,24 @@ Output: {{"constraints": [{{"type": "faculty_availability", "faculty_name": "Pro
                     min_gap = 1
                 if class_name:
                     normalized.append({"type": "class_gap", "class_name": str(class_name), "min_gap": min_gap})
+
+            # ── specific_time_slot ───────────────────────────────────────────
+            elif c_type in {"specific_time_slot", "exact_time_slot", "specific_slot"}:
+                target = c.get("target") or c.get("subject_name") or c.get("class_name") or ""
+                target_type = c.get("target_type") or "subject"
+                day_val = c.get("day") or c.get("day_name")
+                day = self._parse_day_names([day_val])[0] if day_val and self._parse_day_names([day_val]) else None
+                period = c.get("period") or c.get("period_number")
+                try:
+                    period = int(period) if period is not None else None
+                except (TypeError, ValueError):
+                    period = None
+                
+                if target and period is not None:
+                    constraint = {"type": "specific_time_slot", "target": str(target), "target_type": str(target_type), "period": period}
+                    if day:
+                        constraint["day"] = day
+                    normalized.append(constraint)
 
             # ── pass-through unknowns ────────────────────────────────────────
             else:

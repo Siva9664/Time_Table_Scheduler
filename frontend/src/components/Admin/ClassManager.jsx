@@ -55,6 +55,9 @@ export default function ClassManager() {
     setValue('semester', cls.semester);
     setValue('student_count', cls.student_count);
     setShowForm(true);
+    setTimeout(() => {
+        document.querySelector('.main-content')?.scrollTo({ top: 0, behavior: 'smooth' });
+    }, 50);
   };
 
   const onSubmit = async (data) => {
