@@ -1,15 +1,15 @@
-import React from 'react';
+import React, { Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route, useLocation, Outlet } from 'react-router-dom';
-import Dashboard from './components/Admin/Dashboard';
-import DepartmentManager from './components/Admin/DepartmentManager';
-import ClassManager from './components/Admin/ClassManager';
-import SubjectManager from './components/Admin/SubjectManager';
-import FacultyManager from './components/Admin/FacultyManager';
-import BatchManager from './components/Admin/BatchManager';
-import FacultyMapping from './components/Admin/FacultyMapping';
-import TimetableGenerator from './components/Timetable/TimetableGenerator';
-import TimetableView from './components/Timetable/TimetableView';
-import Settings from './components/Admin/Settings';
+const Dashboard = React.lazy(() => import('./components/Admin/Dashboard'));
+const DepartmentManager = React.lazy(() => import('./components/Admin/DepartmentManager'));
+const ClassManager = React.lazy(() => import('./components/Admin/ClassManager'));
+const SubjectManager = React.lazy(() => import('./components/Admin/SubjectManager'));
+const FacultyManager = React.lazy(() => import('./components/Admin/FacultyManager'));
+const BatchManager = React.lazy(() => import('./components/Admin/BatchManager'));
+const FacultyMapping = React.lazy(() => import('./components/Admin/FacultyMapping'));
+const TimetableGenerator = React.lazy(() => import('./components/Timetable/TimetableGenerator'));
+const TimetableView = React.lazy(() => import('./components/Timetable/TimetableView'));
+const Settings = React.lazy(() => import('./components/Admin/Settings'));
 import Sidebar from './components/Layout/Sidebar';
 import { ToastProvider } from './context/ToastContext';
 
@@ -32,7 +32,15 @@ function App() {
   return (
     <ToastProvider>
       <Router>
-        <Routes>
+        
+        <Suspense fallback={
+            <div className="flex flex-col items-center justify-center h-screen space-y-4 bg-slate-50">
+                <div className="w-12 h-12 border-4 border-primary-500 border-t-transparent rounded-full animate-spin"></div>
+                <div className="text-xl font-medium text-slate-500">Loading Application...</div>
+            </div>
+        }>
+          <Routes>
+
           <Route path="/" element={<MainLayout />}>
             <Route index element={<Dashboard />} />
             <Route path="departments" element={<DepartmentManager />} />
@@ -45,7 +53,8 @@ function App() {
             <Route path="view" element={<TimetableView />} />
             <Route path="settings" element={<Settings />} />
           </Route>
-        </Routes>
+          </Routes>
+        </Suspense>
       </Router>
     </ToastProvider>
   );
