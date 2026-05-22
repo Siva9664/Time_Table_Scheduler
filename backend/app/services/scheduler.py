@@ -467,14 +467,17 @@ class TimetableScheduler:
             for s in cls_subjects[:4]:
                 top_theory_subject_ids.add(self._id_str(s.id))
 
+        self.shortage_vars = []
         # 1. Subject Requirements: sum(all subject vars) >= effective_hours for top 4 theory, == for others
         for subject in self.subjects:
             all_sub_vars = self.vars_by_subject.get(subject.id, [])
             if all_sub_vars:
+                shortage = self.model.NewIntVar(0, 100, f"shortage_s{subject.id}")
+                self.shortage_vars.append(shortage)
                 if subject.requires_lab or self._id_str(subject.id) not in top_theory_subject_ids:
-                    self.model.Add(sum(all_sub_vars) == self._effective_hours(subject))
+                    self.model.Add(sum(all_sub_vars) + shortage == self._effective_hours(subject))
                 else:
-                    self.model.Add(sum(all_sub_vars) >= self._effective_hours(subject))
+                    self.model.Add(sum(all_sub_vars) + shortage >= self._effective_hours(subject))
         logger.debug("Added Subject Requirement constraints")
 
         # 1.5. Prevent Daily Monotony: Max 2 periods per day for theory subjects
@@ -613,6 +616,27 @@ class TimetableScheduler:
                     logger.debug(f"Applied faculty_availability for '{f_name}'")
                 else:
                     self._constraint_error(f"faculty_availability: faculty '{f_name}' not found in loaded data")
+
+            # ── faculty_time_unavailability ────────────────────────────────────
+            elif c_type == "faculty_time_unavailability":
+                f_name = constraint.get("faculty_name", "")
+                target_fac = self._find_faculty_by_name(f_name)
+                start_time = constraint.get("start_time")
+                end_time = constraint.get("end_time")
+                if target_fac and start_time and end_time:
+                    try:
+                        s_min = self._parse_time(start_time)
+                        e_min = self._parse_time(end_time)
+                        for day_idx, day_name in enumerate(self.working_days):
+                            entries = self.vars_by_faculty.get(self._id_str(target_fac.id), {}).get(day_idx, [])
+                            for e in entries:
+                                if e['start'] < e_min and s_min < e['end']:
+                                    self.model.Add(e['var'] == 0)
+                        logger.debug(f"Applied faculty_time_unavailability for '{f_name}' ({start_time}-{end_time})")
+                    except Exception as ex:
+                        self._constraint_error(f"faculty_time_unavailability: invalid time format {ex}")
+                else:
+                    self._constraint_error(f"faculty_time_unavailability: target '{f_name}' not found or missing times")
 
             # ── subject_max_per_day ────────────────────────────────────────────
             elif c_type == "subject_max_per_day":
@@ -819,6 +843,8 @@ class TimetableScheduler:
                             penalty_terms.append(self.variables[key] * (base_reward + morning_penalty))
 
         morning_penalty = sum(penalty_terms) if penalty_terms else 0
+        if hasattr(self, 'shortage_vars') and self.shortage_vars:
+            morning_penalty += sum(v * 100000 for v in self.shortage_vars)
 
         if len(theory_daily_load) >= 2:
             max_load = self.model.NewIntVar(0, self.periods_per_day * len(self.subjects), "max_load")

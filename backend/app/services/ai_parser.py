@@ -16,7 +16,7 @@ class AIConstraintParser:
     """
 
     SUPPORTED_TYPES = [
-        "faculty_availability", "faculty_unavailability", "consecutive_periods",
+        "faculty_availability", "faculty_unavailability", "faculty_time_unavailability", "consecutive_periods",
         "subject_max_per_day", "preferred_time_slot", "avoid_time_slot",
         "class_gap", "specific_time_slot",
     ]
@@ -96,12 +96,13 @@ class AIConstraintParser:
 ## Constraint Types
 1. faculty_availability  – {{"type":"faculty_availability","faculty_name":"Dr. X","available_days":["Monday"]}}
 2. faculty_unavailability – {{"type":"faculty_unavailability","faculty_name":"Prof. Y","unavailable_days":["Friday"]}}
-3. consecutive_periods   – {{"type":"consecutive_periods","subject_type":"lab"}}
-4. subject_max_per_day   – {{"type":"subject_max_per_day","subject_name":"Maths","max_per_day":1}}
-5. preferred_time_slot   – {{"type":"preferred_time_slot","target":"Physics","target_type":"subject","preference":"morning"}}
-6. avoid_time_slot       – {{"type":"avoid_time_slot","target":"CSE-A","target_type":"class","periods":[7,8]}}
-7. class_gap             – {{"type":"class_gap","class_name":"CSE-A","min_gap":1}}
-8. specific_time_slot    – {{"type":"specific_time_slot","target":"Physics","target_type":"subject","day":"Monday","period":2}}
+3. faculty_time_unavailability – {{"type":"faculty_time_unavailability","faculty_name":"Dr. X","start_time":"10:15","end_time":"12:30"}}
+4. consecutive_periods   – {{"type":"consecutive_periods","subject_type":"lab"}}
+5. subject_max_per_day   – {{"type":"subject_max_per_day","subject_name":"Maths","max_per_day":1}}
+6. preferred_time_slot   – {{"type":"preferred_time_slot","target":"Physics","target_type":"subject","preference":"morning"}}
+7. avoid_time_slot       – {{"type":"avoid_time_slot","target":"CSE-A","target_type":"class","periods":[7,8]}}
+8. class_gap             – {{"type":"class_gap","class_name":"CSE-A","min_gap":1}}
+9. specific_time_slot    – {{"type":"specific_time_slot","target":"Physics","target_type":"subject","day":"Monday","period":2}}
 
 ## Rules
 - Match names exactly to the context above.
@@ -312,6 +313,9 @@ Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{
 
     def _split_text(self, text: str) -> List[str]:
         """Split on sentence boundaries only. Never split on 'and' — it's part of day lists."""
+        # Fix dots in time formats (12.30 -> 12:30) before splitting
+        if text:
+            text = re.sub(r"(\d)\.(\d)", r"\1:\2", text)
         # Split on periods, semicolons, newlines, bullets
         chunks = re.split(r"[.;\n\r]+", text or "")
         result = []
@@ -359,14 +363,25 @@ Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{
                 "cannot come", "can't come", "cant come",
             ]
             if faculty and any(p in lower for p in UNAVAIL_PHRASES):
-                days = self._parse_day_names(chunk)
-                if days:
-                    constraints.append({
-                        "type": "faculty_unavailability",
-                        "faculty_name": faculty,
-                        "unavailable_days": days,
-                    })
-                    produced = True
+                time_matches = list(re.finditer(r"(\d{1,2}[:.]\d{2}\s*(?:am|pm)?)\s*(?:to|-)\s*(\d{1,2}[:.]\d{2}\s*(?:am|pm)?)", lower))
+                if time_matches:
+                    for tm in time_matches:
+                        constraints.append({
+                            "type": "faculty_time_unavailability",
+                            "faculty_name": faculty,
+                            "start_time": tm.group(1),
+                            "end_time": tm.group(2),
+                        })
+                        produced = True
+                else:
+                    days = self._parse_day_names(chunk)
+                    if days:
+                        constraints.append({
+                            "type": "faculty_unavailability",
+                            "faculty_name": faculty,
+                            "unavailable_days": days,
+                        })
+                        produced = True
 
             # ── 3. consecutive_periods ──────────────────────────────────────
             CONSEC_PHRASES = ["consecutive", "continuous", "back to back", "back-to-back", "together"]
@@ -513,6 +528,20 @@ Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{
                 if name and unavail:
                     # Store as faculty_availability with the complement days
                     out.append({"type": "faculty_availability", "faculty_name": str(name), "available_days": avail})
+
+            elif t in {"faculty_time_unavailability", "time_unavailability", "faculty_time"}:
+                name = c.get("faculty_name") or c.get("faculty") or c.get("name")
+                start = c.get("start_time") or c.get("start")
+                end = c.get("end_time") or c.get("end")
+                if name and start and end:
+                    # try to ensure HH:MM format
+                    start = str(start).replace(".", ":").lower()
+                    end = str(end).replace(".", ":").lower()
+                    # simplistic am/pm cleanup
+                    for suffix in [" am", " pm", "am", "pm"]:
+                        start = start.replace(suffix, "")
+                        end = end.replace(suffix, "")
+                    out.append({"type": "faculty_time_unavailability", "faculty_name": str(name), "start_time": start.strip(), "end_time": end.strip()})
 
             elif t in {"consecutive_periods", "consecutive", "continuous"}:
                 st = c.get("subject_type") or c.get("subject") or "lab"
