@@ -82,6 +82,7 @@ export const subjectAPI = {
   getAll: () => getCached('/subjects'),
   create: (data) => withCacheClear(api.post('/subjects', data)),
   update: (id, data) => withCacheClear(api.put(`/subjects/${id}`, data)),
+  map: (id, data) => withCacheClear(api.post(`/subjects/${id}/map`, data)),
   delete: (id) => withCacheClear(api.delete(`/subjects/${id}`))
 };
 

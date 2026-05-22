@@ -133,6 +133,24 @@ def _enrich_subject(doc: dict, db: Database) -> dict:
             pass
     return subject_helper(doc, assigned_class=_enrich_class(cls_doc, db) if cls_doc else None)
 
+def _subject_source_id(doc: dict) -> str:
+    return doc.get("source_subject_id") or str(doc["_id"])
+
+def _subject_mapping_query(source_id: str, subject: dict, class_id: str) -> dict:
+    return {
+        "class_id": class_id,
+        "$or": [
+            {"source_subject_id": source_id},
+            {"_id": _oid(source_id)} if ObjectId.is_valid(source_id) else {"_id": source_id},
+            {
+                "code": subject.get("code", ""),
+                "name": subject.get("name", ""),
+                "requires_lab": subject.get("requires_lab", False),
+                "source_subject_id": {"$exists": False},
+            },
+        ],
+    }
+
 @router.post("/subjects", response_model=SubjectResponse)
 def create_subject(subj: SubjectCreate, db: Database = Depends(get_tenant_db), current_user: dict = Depends(get_admin_user)):
     doc = {**subj.dict(), "created_at": datetime.utcnow()}
@@ -171,6 +189,46 @@ def update_subject(id: str, subj: SubjectUpdate, db: Database = Depends(get_tena
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
     return _enrich_subject(db["subjects"].find_one({"_id": _oid(id)}), db)
+
+@router.post("/subjects/{id}/map", response_model=SubjectResponse)
+def map_subject_to_class(id: str, mapping: SubjectMapRequest, db: Database = Depends(get_tenant_db), current_user: dict = Depends(get_admin_user)):
+    subject = db["subjects"].find_one({"_id": _oid(id)})
+    if not subject:
+        raise HTTPException(status_code=404, detail="Subject not found")
+
+    cls = db["classes"].find_one({"_id": _oid(mapping.class_id)})
+    if not cls:
+        raise HTTPException(status_code=404, detail="Class not found")
+
+    fac = db["faculty"].find_one({"_id": _oid(mapping.faculty_id)})
+    if not fac:
+        raise HTTPException(status_code=404, detail="Faculty not found")
+
+    source_id = _subject_source_id(subject)
+    existing = db["subjects"].find_one(_subject_mapping_query(source_id, subject, mapping.class_id))
+    if existing:
+        db["subjects"].update_one(
+            {"_id": existing["_id"]},
+            {"$set": {"class_id": mapping.class_id, "faculty_id": mapping.faculty_id, "updated_at": datetime.utcnow()}},
+        )
+        return _enrich_subject(db["subjects"].find_one({"_id": existing["_id"]}), db)
+
+    clone_fields = {
+        "name": subject.get("name", ""),
+        "code": subject.get("code", ""),
+        "hours_per_week": subject.get("hours_per_week"),
+        "credits": subject.get("credits", 3),
+        "requires_lab": subject.get("requires_lab", False),
+        "department_id": subject.get("department_id"),
+        "department_ids": subject.get("department_ids") or ([subject.get("department_id")] if subject.get("department_id") else []),
+        "batch_id": subject.get("batch_id"),
+        "class_id": mapping.class_id,
+        "faculty_id": mapping.faculty_id,
+        "source_subject_id": source_id,
+        "created_at": datetime.utcnow(),
+    }
+    result = db["subjects"].insert_one(clone_fields)
+    return _enrich_subject(db["subjects"].find_one({"_id": result.inserted_id}), db)
 
 @router.delete("/subjects/{id}")
 def delete_subject(id: str, db: Database = Depends(get_tenant_db), current_user: dict = Depends(get_admin_user)):

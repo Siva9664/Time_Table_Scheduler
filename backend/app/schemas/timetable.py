@@ -82,9 +82,14 @@ class SubjectBase(BaseModel):
     batch_id: Optional[str] = None
     class_id: Optional[str] = None
     faculty_id: Optional[str] = None
+    source_subject_id: Optional[str] = None
 
 class SubjectCreate(SubjectBase):
     pass
+
+class SubjectMapRequest(BaseModel):
+    class_id: str
+    faculty_id: str
 
 class SubjectUpdate(BaseModel):
     name: Optional[str] = None
@@ -98,6 +103,7 @@ class SubjectUpdate(BaseModel):
     batch_id: Optional[str] = None
     class_id: Optional[str] = None
     faculty_id: Optional[str] = None
+    source_subject_id: Optional[str] = None
 
 class SubjectResponse(SubjectBase):
     id: str

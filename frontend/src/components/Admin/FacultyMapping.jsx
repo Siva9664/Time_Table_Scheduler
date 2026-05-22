@@ -4,7 +4,8 @@ import { useToast } from '../../context/ToastContext';
 import { Edit, Trash2 } from 'lucide-react';
 import ConfirmationModal from '../Layout/ConfirmationModal';
 import CsvUploader from '../Layout/CsvUploader';
-import Select from 'react-select';
+
+const DATA_CACHE_KEY = 'facultyMappingDataCache';
 
 const FacultyMapping = () => {
     const [subjects, setSubjects] = useState([]);
@@ -21,6 +22,7 @@ const FacultyMapping = () => {
     const [selectedFacultyId, setSelectedFacultyId] = useState('');
 
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const [saving, setSaving] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const { showToast } = useToast();
@@ -30,7 +32,9 @@ const FacultyMapping = () => {
     const [subjectToUnassign, setSubjectToUnassign] = useState(null);
 
     useEffect(() => {
-        loadData();
+        const hasCachedData = hydrateCachedData();
+        loadData({ blocking: !hasCachedData });
+
         // Restore cached selections on mount
         const cachedSelections = localStorage.getItem('facultyMappingCache');
         if (cachedSelections) {
@@ -55,9 +59,44 @@ const FacultyMapping = () => {
         localStorage.setItem('facultyMappingCache', JSON.stringify(selectionsToCache));
     }, [selectedBatchId, selectedDeptId, selectedClassId, selectedSubjectId, selectedFacultyId]);
 
-    const loadData = async () => {
+    const hydrateCachedData = () => {
         try {
-            setLoading(true);
+            const cachedData = localStorage.getItem(DATA_CACHE_KEY);
+            if (!cachedData) return false;
+            const parsed = JSON.parse(cachedData);
+            if (!parsed || typeof parsed !== 'object') return false;
+
+            setSubjects(parsed.subjects || []);
+            setClasses(parsed.classes || []);
+            setFaculties(parsed.faculties || []);
+            setDepartments(parsed.departments || []);
+            setBatches(parsed.batches || []);
+            setLoading(false);
+            return true;
+        } catch (err) {
+            console.warn('Failed to read faculty mapping cache', err);
+            return false;
+        }
+    };
+
+    const cacheData = (payload) => {
+        try {
+            localStorage.setItem(DATA_CACHE_KEY, JSON.stringify({
+                ...payload,
+                cached_at: Date.now(),
+            }));
+        } catch (err) {
+            console.warn('Failed to cache faculty mapping data', err);
+        }
+    };
+
+    const loadData = async ({ blocking = false } = {}) => {
+        try {
+            if (blocking) {
+                setLoading(true);
+            } else {
+                setRefreshing(true);
+            }
             const [subRes, classRes, facRes, deptRes, batchRes] = await Promise.all([
                 subjectAPI.getAll(),
                 classAPI.getAll(),
@@ -65,16 +104,26 @@ const FacultyMapping = () => {
                 departmentAPI.getAll(),
                 batchAPI.getAll()
             ]);
-            setSubjects(subRes.data);
-            setClasses(classRes.data);
-            setFaculties(facRes.data);
-            setDepartments(deptRes.data);
-            setBatches(batchRes.data);
+            const nextData = {
+                subjects: subRes.data || [],
+                classes: classRes.data || [],
+                faculties: facRes.data || [],
+                departments: deptRes.data || [],
+                batches: batchRes.data || [],
+            };
+
+            setSubjects(nextData.subjects);
+            setClasses(nextData.classes);
+            setFaculties(nextData.faculties);
+            setDepartments(nextData.departments);
+            setBatches(nextData.batches);
+            cacheData(nextData);
         } catch (err) {
             console.error(err);
             showToast('Failed to load data. Please ensure backend is running.', 'error');
         } finally {
             setLoading(false);
+            setRefreshing(false);
         }
     };
 
@@ -100,15 +149,23 @@ const FacultyMapping = () => {
 
         setSaving(true);
         try {
-            await subjectAPI.update(selectedSubjectId, {
+            const response = await subjectAPI.map(selectedSubjectId, {
                 class_id: selectedClassId,
                 faculty_id: selectedFacultyId
             });
 
-            // Optimistically update local state instead of doing a full slow re-fetch
-            setSubjects(prev => prev.map(s => 
-                s.id === selectedSubjectId ? { ...s, class_id: selectedClassId, faculty_id: selectedFacultyId } : s
-            ));
+            const mappedSubject = response.data;
+            const nextSubjects = subjects.some(s => s.id === mappedSubject.id)
+                ? subjects.map(s => s.id === mappedSubject.id ? mappedSubject : s)
+                : [...subjects, mappedSubject];
+            setSubjects(prev => {
+                const exists = prev.some(s => s.id === mappedSubject.id);
+                return exists
+                    ? prev.map(s => s.id === mappedSubject.id ? mappedSubject : s)
+                    : [...prev, mappedSubject];
+            });
+            cacheData({ subjects: nextSubjects, classes, faculties, departments, batches });
+            loadData({ blocking: false });
 
             // Reset form partly (keep faculty selected)
             setSelectedSubjectId('');
@@ -150,9 +207,11 @@ const FacultyMapping = () => {
         try {
             await subjectAPI.update(subjectToUnassign, { faculty_id: null });
             // Optimistically update local state instead of doing a full slow re-fetch
-            setSubjects(prev => prev.map(s => 
+            const nextSubjects = subjects.map(s => 
                 s.id === subjectToUnassign ? { ...s, faculty_id: null } : s
-            ));
+            );
+            setSubjects(nextSubjects);
+            cacheData({ subjects: nextSubjects, classes, faculties, departments, batches });
             showToast('Faculty unassigned!', 'success');
         } catch (error) {
             showToast('Failed to unassign faculty.', 'error');
@@ -185,7 +244,7 @@ const FacultyMapping = () => {
     });
 
     // 2. Filter Subjects based on Class
-    const availableSubjects = subjects.filter(s => {
+    const matchingSubjects = subjects.filter(s => {
         if (!selectedClassId) return false;
         const selectedClass = classes.find(c => c.id === selectedClassId);
         if (!selectedClass) return false;
@@ -197,6 +256,23 @@ const FacultyMapping = () => {
         return subjectDeptIds.includes(selectedClass.department_id) &&
             (!s.batch_id || s.batch_id === selectedClass.batch_id);
     });
+
+    const availableSubjects = Array.from(
+        matchingSubjects
+            .sort((a, b) => {
+                if (a.class_id === selectedClassId && b.class_id !== selectedClassId) return -1;
+                if (a.class_id !== selectedClassId && b.class_id === selectedClassId) return 1;
+                if (!a.class_id && b.class_id) return -1;
+                if (a.class_id && !b.class_id) return 1;
+                return (a.name || '').localeCompare(b.name || '');
+            })
+            .reduce((map, subject) => {
+                const key = (subject.source_subject_id || subject.id).toLowerCase();
+                if (!map.has(key)) map.set(key, subject);
+                return map;
+            }, new Map())
+            .values()
+    );
 
     // 3. ALL faculty are available cross-department — a faculty can teach
     //    subjects in any department. Sort by name for easy lookup.
@@ -238,7 +314,8 @@ const FacultyMapping = () => {
         );
     });
 
-    if (loading) return <div className="p-8 text-center text-gray-500">Loading data...</div>;
+    const hasAnyData = subjects.length || classes.length || faculties.length || departments.length || batches.length;
+    const controlsDisabled = loading && !hasAnyData;
 
     return (
         <div className="space-y-8">
@@ -250,7 +327,14 @@ const FacultyMapping = () => {
                 message="Are you sure you want to remove the assigned faculty from this subject?"
             />
 
-            <h1 className="text-3xl font-bold text-slate-800">Faculty Mapping</h1>
+            <div className="flex items-center justify-between gap-4">
+                <h1 className="text-3xl font-bold text-slate-800">Faculty Mapping</h1>
+                {(loading || refreshing) && (
+                    <span className="text-xs font-semibold text-blue-600 bg-blue-50 border border-blue-100 px-3 py-1 rounded-full">
+                        Refreshing...
+                    </span>
+                )}
+            </div>
 
             {/* Top Section: Mapping Form */}
             <div className="bg-white rounded-xl shadow-lg p-6 border border-slate-100">
@@ -262,6 +346,7 @@ const FacultyMapping = () => {
                         <select
                             className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-slate-50"
                             value={selectedBatchId}
+                            disabled={controlsDisabled}
                             onChange={(e) => {
                                 setSelectedBatchId(e.target.value);
                                 setSelectedClassId('');
@@ -280,6 +365,7 @@ const FacultyMapping = () => {
                         <select
                             className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-slate-50"
                             value={selectedDeptId}
+                            disabled={controlsDisabled}
                             onChange={(e) => {
                                 setSelectedDeptId(e.target.value);
                                 setSelectedClassId('');
@@ -303,7 +389,7 @@ const FacultyMapping = () => {
                                 setSelectedSubjectId('');
                             }}
                             // Enable if either Batch or Dept is selected (or both), or if just browsing
-                            disabled={availableClasses.length === 0 && (selectedBatchId || selectedDeptId)}
+                            disabled={controlsDisabled || (availableClasses.length === 0 && (selectedBatchId || selectedDeptId))}
                         >
                             <option value="">Select Class</option>
                             {availableClasses.map(c => (
@@ -319,7 +405,7 @@ const FacultyMapping = () => {
                             className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-slate-50"
                             value={selectedSubjectId}
                             onChange={(e) => setSelectedSubjectId(e.target.value)}
-                            disabled={!selectedClassId}
+                            disabled={controlsDisabled || !selectedClassId}
                         >
                             <option value="">Select Subject</option>
                             {availableSubjects.map(s => (
@@ -336,6 +422,7 @@ const FacultyMapping = () => {
                         <select
                             className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-slate-50"
                             value={selectedFacultyId}
+                            disabled={controlsDisabled}
                             onChange={(e) => setSelectedFacultyId(e.target.value)}
                         >
                             <option value="">Select Faculty...</option>
@@ -351,7 +438,7 @@ const FacultyMapping = () => {
                     <div className="w-full sm:w-auto">
                         <button
                             onClick={handleMap}
-                            disabled={saving}
+                            disabled={saving || controlsDisabled}
                             className="w-full px-2 py-2 bg-slate-400 text-white font-bold rounded-lg hover:bg-slate-500 shadow-lg transition-all duration-200"
                             style={{ backgroundColor: '#94a3b8', height: '40px' }}
                         >

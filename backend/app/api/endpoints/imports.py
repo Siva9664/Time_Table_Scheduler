@@ -6,6 +6,7 @@ import os
 import io
 import zipfile
 from typing import List, Optional, Tuple
+from datetime import datetime
 
 from ...database.database import get_db
 
@@ -292,18 +293,51 @@ async def upload_csv(type: str = Form(...), file: UploadFile = File(...), db=Dep
         elif type == 'mappings':
             updates = 0
             for row in rows:
-                subj = db['subjects'].find_one({'code': row.get('subject_code')})
+                subj = (
+                    db['subjects'].find_one({'code': row.get('subject_code'), 'source_subject_id': {'$exists': False}, 'class_id': None})
+                    or db['subjects'].find_one({'code': row.get('subject_code'), 'source_subject_id': {'$exists': False}})
+                    or db['subjects'].find_one({'code': row.get('subject_code')})
+                )
                 cls = db['classes'].find_one({'name': row.get('class_name'), 'section': row.get('class_section')})
                 fac = db['faculty'].find_one({'email': row.get('faculty_email')})
                 if subj and (cls or fac):
-                    u = {}
-                    if cls:
-                        u['class_id'] = str(cls['_id'])
-                    if fac:
-                        u['faculty_id'] = str(fac['_id'])
-                    if u:
-                        db['subjects'].update_one({'_id': subj['_id']}, {'$set': u})
-                        updates += 1
+                    class_id = str(cls['_id']) if cls else subj.get('class_id')
+                    faculty_id = str(fac['_id']) if fac else subj.get('faculty_id')
+                    source_id = subj.get('source_subject_id') or str(subj['_id'])
+                    existing = db['subjects'].find_one({
+                        'class_id': class_id,
+                        '$or': [
+                            {'source_subject_id': source_id},
+                            {'_id': subj['_id']},
+                            {
+                                'code': subj.get('code'),
+                                'name': subj.get('name'),
+                                'requires_lab': subj.get('requires_lab', False),
+                                'source_subject_id': {'$exists': False},
+                            },
+                        ],
+                    })
+                    if existing:
+                        db['subjects'].update_one(
+                            {'_id': existing['_id']},
+                            {'$set': {'class_id': class_id, 'faculty_id': faculty_id, 'updated_at': datetime.utcnow()}}
+                        )
+                    else:
+                        db['subjects'].insert_one({
+                            'name': subj.get('name') or '',
+                            'code': subj.get('code') or '',
+                            'hours_per_week': subj.get('hours_per_week'),
+                            'credits': subj.get('credits', 3),
+                            'requires_lab': subj.get('requires_lab', False),
+                            'department_id': subj.get('department_id'),
+                            'department_ids': subj.get('department_ids') or ([subj.get('department_id')] if subj.get('department_id') else []),
+                            'batch_id': subj.get('batch_id'),
+                            'class_id': class_id,
+                            'faculty_id': faculty_id,
+                            'source_subject_id': source_id,
+                            'created_at': datetime.utcnow(),
+                        })
+                    updates += 1
             count = updates
 
         return JSONResponse({'imported': count, 'type': type})

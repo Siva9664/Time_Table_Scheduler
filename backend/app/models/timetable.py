@@ -53,12 +53,14 @@ def subject_helper(doc: dict, assigned_class: dict = None) -> dict:
         "name": doc.get("name", ""),
         "code": doc.get("code", ""),
         "hours_per_week": doc.get("hours_per_week"),  # None means derive from credits
+        "credits": doc.get("credits", 3),
         "requires_lab": doc.get("requires_lab", False),
         "department_id": doc.get("department_id"),
         "department_ids": department_ids or [],
         "batch_id": doc.get("batch_id"),
         "class_id": doc.get("class_id"),
         "faculty_id": faculty_id,
+        "source_subject_id": doc.get("source_subject_id"),
         "created_at": doc.get("created_at", datetime.utcnow()),
         "assigned_class": assigned_class,
     }
