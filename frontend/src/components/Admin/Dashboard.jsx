@@ -84,19 +84,19 @@ export default function Dashboard() {
     <div className="max-w-7xl mx-auto space-y-10">
       <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
         <div>
-           <h1 className="text-4xl font-black text-slate-800 tracking-tight uppercase">
-             {admin ? 'Admin Dashboard' : 'Faculty Dashboard'}
-           </h1>
-           <div className="h-1.5 w-20 bg-primary-500 rounded-full mt-2"></div>
+          <h1 className="text-4xl font-black text-slate-800 tracking-tight uppercase">
+            {admin ? 'Admin Dashboard' : 'Faculty Dashboard'}
+          </h1>
+          <div className="h-1.5 w-20 bg-primary-500 rounded-full mt-2"></div>
         </div>
         <div className="bg-white px-4 py-2 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-3">
-            <div className="w-10 h-10 bg-primary-100 text-primary-600 rounded-xl flex items-center justify-center">
-                <User size={20} />
-            </div>
-            <div>
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Logged in as</p>
-                <p className="text-sm font-black text-slate-700">{user?.full_name || user?.username}</p>
-            </div>
+          <div className="w-10 h-10 bg-primary-100 text-primary-600 rounded-xl flex items-center justify-center">
+            <User size={20} />
+          </div>
+          <div>
+            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Logged in as</p>
+            <p className="text-sm font-black text-slate-700">{user?.full_name || user?.username}</p>
+          </div>
         </div>
       </header>
 
@@ -113,10 +113,10 @@ export default function Dashboard() {
           <>
             <StatCard title="Available Timetables" value={stats.timetables} color="bg-[#3b82f6]" path="/view" />
             <div className="lg:col-span-3 bg-gradient-to-r from-primary-600/10 to-blue-600/10 rounded-3xl p-8 border border-primary-500/10 flex items-center justify-center">
-                 <div className="text-center">
-                    <h3 className="text-2xl font-black text-primary-700 mb-2">Welcome Back!</h3>
-                    <p className="text-slate-500">You can view all generated timetables and filter by your name in the Timetables section.</p>
-                 </div>
+              <div className="text-center">
+                <h3 className="text-2xl font-black text-primary-700 mb-2">Welcome Back!</h3>
+                <p className="text-slate-500">You can view all generated timetables and filter by your name in the Timetables section.</p>
+              </div>
             </div>
           </>
         )}
@@ -130,13 +130,13 @@ export default function Dashboard() {
         </h2>
         <div className="flex flex-wrap gap-4">
           {admin ? (
-             <>
-                <ActionButton icon={BookOpen} label="Manage Subjects" color="bg-slate-700" onClick={() => navigate('/subjects')} />
-                <ActionButton icon={Users} label="Faculty Mapping" color="bg-blue-600" onClick={() => navigate('/mapping')} />
-                <ActionButton icon={Calendar} label="View Timetables" color="bg-orange-500" onClick={() => navigate('/view')} />
-                <ActionButton icon={Download} label="Download Templates" color="bg-purple-600" onClick={() => { window.location.href = '/api/imports/templates'; }} />
-                <ActionButton icon={Plus} label="Generate New" color="bg-slate-600" onClick={() => navigate('/generate')} />
-             </>
+            <>
+              <ActionButton icon={BookOpen} label="Manage Subjects" color="bg-slate-700" onClick={() => navigate('/subjects')} />
+              <ActionButton icon={Users} label="Faculty Mapping" color="bg-blue-600" onClick={() => navigate('/mapping')} />
+              <ActionButton icon={Calendar} label="View Timetables" color="bg-orange-500" onClick={() => navigate('/view')} />
+              <ActionButton icon={Download} label="Download Templates" color="bg-purple-600" onClick={() => { window.location.href = '/api/imports/templates'; }} />
+              <ActionButton icon={Plus} label="Generate New" color="bg-slate-600" onClick={() => navigate('/generate')} />
+            </>
           ) : (
             <ActionButton icon={Calendar} label="View All Timetables" color="bg-primary-600" onClick={() => navigate('/view')} />
           )}
@@ -145,33 +145,33 @@ export default function Dashboard() {
 
       {/* Recent Activity Section */}
       {admin && (
-          <div className="bg-white rounded-3xl p-8 shadow-xl border border-slate-100">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-              <h2 className="text-xl font-extrabold text-slate-700 flex items-center gap-2">
-                <Clock size={24} className="text-primary-500" />
-                Recent System Activity
-              </h2>
-            </div>
-    
-            <div className="space-y-4">
-              {[
-                { action: "Generated timetable for Spring 2024", time: "2 hours ago", type: "system" },
-                { action: "Added 5 new faculty members to CSE Dept", time: "5 hours ago", type: "modify" },
-                { action: "System maintenance completed", time: "1 day ago", type: "modify" }
-              ].map((item, idx) => (
-                <div key={idx} className="flex items-center justify-between p-4 rounded-2xl bg-slate-50 border border-slate-100 hover:bg-slate-100 transition-colors cursor-default">
-                  <div className="flex flex-wrap items-center gap-4">
-                    <div className={`w-2 h-2 rounded-full ${item.type === 'system' ? 'bg-blue-500' : 'bg-green-500'}`} />
-                    <div>
-                      <p className="font-bold text-slate-700 text-sm">{item.action}</p>
-                      <p className="text-xs text-slate-400 mt-0.5">{item.time}</p>
-                    </div>
-                  </div>
-                  <ChevronRight size={18} className="text-slate-300" />
-                </div>
-              ))}
-            </div>
+        <div className="bg-white rounded-3xl p-8 shadow-xl border border-slate-100">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+            <h2 className="text-xl font-extrabold text-slate-700 flex items-center gap-2">
+              <Clock size={24} className="text-primary-500" />
+              Recent System Activity
+            </h2>
           </div>
+
+          <div className="space-y-4">
+            {[
+              { action: "Generated timetable for Spring 2024", time: "2 hours ago", type: "system" },
+              { action: "Added 5 new faculty members to AIML Dept", time: "5 hours ago", type: "modify" },
+              { action: "System maintenance completed", time: "1 day ago", type: "modify" }
+            ].map((item, idx) => (
+              <div key={idx} className="flex items-center justify-between p-4 rounded-2xl bg-slate-50 border border-slate-100 hover:bg-slate-100 transition-colors cursor-default">
+                <div className="flex flex-wrap items-center gap-4">
+                  <div className={`w-2 h-2 rounded-full ${item.type === 'system' ? 'bg-blue-500' : 'bg-green-500'}`} />
+                  <div>
+                    <p className="font-bold text-slate-700 text-sm">{item.action}</p>
+                    <p className="text-xs text-slate-400 mt-0.5">{item.time}</p>
+                  </div>
+                </div>
+                <ChevronRight size={18} className="text-slate-300" />
+              </div>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );

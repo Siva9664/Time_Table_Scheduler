@@ -84,6 +84,20 @@ const FacultyMapping = () => {
             return;
         }
 
+        const faculty = faculties.find(f => f.id === selectedFacultyId);
+        const subjectToMap = subjects.find(s => s.id === selectedSubjectId);
+
+        if (faculty && subjectToMap) {
+            const currentlyAssigned = subjects.filter(s => s.faculty_id === selectedFacultyId && s.id !== selectedSubjectId);
+            const currentHours = currentlyAssigned.reduce((sum, s) => sum + (s.hours_per_week || s.credits || 3), 0);
+            const newSubjectHours = subjectToMap.hours_per_week || subjectToMap.credits || 3;
+
+            if (currentHours + newSubjectHours > (faculty.max_hours_per_week || 20)) {
+                showToast(`Cannot assign: ${faculty.name}'s max load is ${faculty.max_hours_per_week || 20} hours. This assignment would increase their load to ${currentHours + newSubjectHours} hours.`, 'error');
+                return;
+            }
+        }
+
         setSaving(true);
         try {
             await subjectAPI.update(selectedSubjectId, {
@@ -189,6 +203,14 @@ const FacultyMapping = () => {
     const availableFaculties = [...faculties].sort((a, b) =>
         (a.name || '').localeCompare(b.name || '')
     );
+
+    const facultyOptions = availableFaculties.map(f => {
+        const deptName = f.department_id ? getDepartmentName(f.department_id) : '';
+        return {
+            value: f.id,
+            label: `${f.name}${deptName ? ` (${deptName})` : ''}`
+        };
+    });
 
 
     // --- Filtering Logic for Table (Search) ---
@@ -309,38 +331,18 @@ const FacultyMapping = () => {
                         <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
                             Faculty <span className="text-blue-400 normal-case font-normal">(any dept)</span>
                         </label>
-                        <Select
-                            options={availableFaculties.map(f => ({
-                                value: f.id,
-                                label: `${f.name}${f.department_id ? ` (${getDepartmentName(f.department_id)})` : ''}`
-                            }))}
-                            value={
-                                selectedFacultyId 
-                                ? { 
-                                    value: selectedFacultyId, 
-                                    label: (() => {
-                                        const f = availableFaculties.find(fac => fac.id === selectedFacultyId);
-                                        return f ? `${f.name}${f.department_id ? ` (${getDepartmentName(f.department_id)})` : ''}` : '';
-                                    })()
-                                  } 
-                                : null
-                            }
-                            onChange={(option) => setSelectedFacultyId(option ? option.value : '')}
-                            isClearable
-                            placeholder="Search..."
-                            styles={{
-                                control: (base) => ({
-                                    ...base,
-                                    minHeight: '40px',
-                                    borderRadius: '0.5rem',
-                                    borderColor: '#e2e8f0',
-                                    backgroundColor: '#f8fafc',
-                                    boxShadow: 'none',
-                                    '&:hover': { borderColor: '#cbd5e1' }
-                                }),
-                                menu: (base) => ({ ...base, zIndex: 50 })
-                            }}
-                        />
+                        <select
+                            className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-slate-50"
+                            value={selectedFacultyId}
+                            onChange={(e) => setSelectedFacultyId(e.target.value)}
+                        >
+                            <option value="">Select Faculty...</option>
+                            {facultyOptions.map(o => (
+                                <option key={o.value} value={o.value}>
+                                    {o.label}
+                                </option>
+                            ))}
+                        </select>
                     </div>
 
                     {/* MAP Button */}
