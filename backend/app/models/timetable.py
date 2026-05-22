@@ -44,6 +44,10 @@ def subject_helper(doc: dict, assigned_class: dict = None) -> dict:
     if department_ids is None and doc.get("department_id"):
         department_ids = [doc.get("department_id")]
 
+    faculty_id = doc.get("faculty_id")
+    if faculty_id:
+        faculty_id = str(faculty_id)
+
     return {
         "id": str(doc["_id"]),
         "name": doc.get("name", ""),
@@ -54,7 +58,7 @@ def subject_helper(doc: dict, assigned_class: dict = None) -> dict:
         "department_ids": department_ids or [],
         "batch_id": doc.get("batch_id"),
         "class_id": doc.get("class_id"),
-        "faculty_id": doc.get("faculty_id"),
+        "faculty_id": faculty_id,
         "created_at": doc.get("created_at", datetime.utcnow()),
         "assigned_class": assigned_class,
     }

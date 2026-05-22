@@ -31,30 +31,30 @@ def get_client() -> MongoClient:
         _client = MongoClient(settings.MONGODB_URL, **conn_args)
         _client.admin.command('ping')
         _connection_ready = True
-        logger.info("✅ Successfully connected to MongoDB Atlas!")
+        logger.info("[SUCCESS] Successfully connected to MongoDB Atlas!")
         return _client
     except Exception as e:
-        logger.warning(f"⚠️ Primary Atlas connection failed: {str(e)[:200]}")
+        logger.warning(f"[WARNING] Primary Atlas connection failed: {str(e)[:200]}")
         try:
             # Try once more with SSL verification disabled
             logger.info("Retrying Atlas with SSL verification disabled...")
             _client = MongoClient(settings.MONGODB_URL, tlsAllowInvalidCertificates=True, **conn_args)
             _client.admin.command('ping')
             _connection_ready = True
-            logger.info("✅ Connected to MongoDB Atlas (SSL Safety Disabled)")
+            logger.info("[SUCCESS] Connected to MongoDB Atlas (SSL Safety Disabled)")
             return _client
         except Exception as e2:
-            logger.error(f"❌ Failed to reach Atlas: {str(e2)[:200]}")
+            logger.error(f"[ERROR] Failed to reach Atlas: {str(e2)[:200]}")
         
         # Fallback to local MongoDB
         try:
             _client = MongoClient("mongodb://localhost:27017", serverSelectionTimeoutMS=3000)
             _client.admin.command('ping')
             _connection_ready = True
-            logger.info("✅ Connected to Local MongoDB")
+            logger.info("[SUCCESS] Connected to Local MongoDB")
             return _client
         except Exception as e3:
-            logger.error(f"❌ All MongoDB connections failed: {str(e3)[:200]}")
+            logger.error(f"[ERROR] All MongoDB connections failed: {str(e3)[:200]}")
             _client = MongoClient("mongodb://localhost:27017")
             return _client
 

@@ -125,7 +125,12 @@ def update_class(id: str, cls: ClassUpdate, db: Database = Depends(get_tenant_db
 # ── Subjects ──────────────────────────────────────────────────────────────────
 
 def _enrich_subject(doc: dict, db: Database) -> dict:
-    cls_doc = db["classes"].find_one({"_id": _oid(doc["class_id"])}) if doc.get("class_id") else None
+    cls_doc = None
+    if doc and doc.get("class_id"):
+        try:
+            cls_doc = db["classes"].find_one({"_id": _oid(doc["class_id"])})
+        except Exception:
+            pass
     return subject_helper(doc, assigned_class=_enrich_class(cls_doc, db) if cls_doc else None)
 
 @router.post("/subjects", response_model=SubjectResponse)
@@ -141,7 +146,16 @@ def create_subject(subj: SubjectCreate, db: Database = Depends(get_tenant_db), c
 @router.get("/subjects", response_model=List[SubjectResponse])
 def list_subjects(class_id: Optional[str] = None, db: Database = Depends(get_tenant_db), current_user: dict = Depends(get_current_user)):
     query = {"class_id": class_id} if class_id else {}
-    return [_enrich_subject(d, db) for d in db["subjects"].find(query)]
+    results = []
+    for d in db["subjects"].find(query):
+        try:
+            results.append(_enrich_subject(d, db))
+        except Exception as e:
+            import logging
+            logging.error(f"Error enriching subject {d.get('_id')}: {str(e)}")
+            # Still include the subject even if enrichment fails
+            results.append(subject_helper(d, assigned_class=None))
+    return results
 
 @router.put("/subjects/{id}", response_model=SubjectResponse)
 def update_subject(id: str, subj: SubjectUpdate, db: Database = Depends(get_tenant_db), current_user: dict = Depends(get_admin_user)):
@@ -329,6 +343,7 @@ def generate_timetable(request: TimetableGenerateRequest, db: Database = Depends
             "parse_diagnostics": parse_diagnostics,
             "auto_adjustments": result.get("auto_adjustments", []),
             "constraint_warnings": result.get("constraint_warnings", []),
+            "substitutes": result.get("substitutes", {}),
         },
         "solver_status": result["status"],
         "solve_time_seconds": result["solve_time"],

@@ -1121,4 +1121,90 @@ class TimetableScheduler:
         result["effective_periods_per_day"] = self.periods_per_day
         result["auto_adjustments"] = self.auto_adjustments
         result["constraint_warnings"] = self.constraint_warnings
+        # Compute suggested alternates for any faculty absence constraints
+        try:
+            result["substitutes"] = self._compute_alternates_for_absent_faculty()
+        except Exception:
+            logger.exception("Failed to compute substitutes mapping")
         return result
+
+    def _compute_alternates_for_absent_faculty(self) -> Dict[str, Any]:
+        """Return suggested alternate faculty for faculty absence constraints.
+
+        The returned structure maps faculty_name -> {
+            "absent_days": [...],
+            "subjects": { subject_name: { day_name: [candidate_names...] } }
+        }
+        This is a best-effort suggestion list (not persisted or enforced).
+        """
+        suggestions = {}
+
+        # Helper: list faculty who could potentially cover a subject on a given day
+        def candidates_for_subject_on_day(subject_obj, day_idx, day_name, excluded_faculty_id):
+            candidates = []
+            for f in self.faculty:
+                if self._id_str(f.id) == self._id_str(excluded_faculty_id):
+                    continue
+                # Check if faculty has at least one available slot for the class timeline
+                cls = self.class_map.get(self._id_str(subject_obj.class_id))
+                intervals = self._get_class_period_intervals(cls) if cls else []
+                available = False
+                for p_idx, (start, end) in enumerate(intervals):
+                    if not self._is_faculty_unavailable(f, day_idx, day_name, p_idx, start, end):
+                        available = True
+                        break
+                if not available:
+                    continue
+
+                score = 0
+                # Prefer faculty who already teach the same subject elsewhere
+                for s in self.subjects:
+                    if self._id_str(s.faculty_id) == self._id_str(f.id) and self._matches_subject(subject_obj.name, s):
+                        score += 30
+                        break
+                # Prefer same department
+                if getattr(f, 'department_id', None) and getattr(cls, '_doc', None):
+                    if f.department_id and cls._doc.get('department_id') and f.department_id == cls._doc.get('department_id'):
+                        score += 10
+
+                candidates.append((score, f.name))
+
+            # Sort by score desc, then name
+            candidates.sort(key=lambda x: (-x[0], x[1]))
+            return [name for _, name in candidates]
+
+        for constraint in self.custom_constraints:
+            c_type = constraint.get('type')
+            if c_type != 'faculty_availability':
+                continue
+            f_name = str(constraint.get('faculty_name') or '').strip()
+            if not f_name:
+                continue
+            allowed_days = [d.lower() for d in constraint.get('available_days', []) if isinstance(d, str)]
+            absent_days = [d for d in self.working_days if d.lower() not in allowed_days]
+            if not absent_days:
+                continue
+
+            fac = self._find_faculty_by_name(f_name)
+            if not fac:
+                # store empty entry marking not found
+                suggestions[f_name] = {"absent_days": absent_days, "error": "faculty not found", "subjects": {}}
+                continue
+
+            subjects = [s for s in self.subjects if self._id_str(s.faculty_id) == self._id_str(fac.id)]
+            subj_map = {}
+            for subj in subjects:
+                subj_map[subj.name] = {}
+                for day in absent_days:
+                    day_idx = next((i for i, dn in enumerate(self.working_days) if dn.lower() == day.lower()), None)
+                    if day_idx is None:
+                        continue
+                    candidates = candidates_for_subject_on_day(subj, day_idx, day, fac.id)
+                    subj_map[subj.name][day] = candidates
+
+            suggestions[fac.name] = {
+                "absent_days": absent_days,
+                "subjects": subj_map,
+            }
+
+        return suggestions

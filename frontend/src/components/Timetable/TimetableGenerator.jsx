@@ -32,6 +32,50 @@ function DiagnosticPanel({ title, items, color, icon }) {
   );
 }
 
+function SubstitutesPanel({ substitutes }) {
+  if (!substitutes || Object.keys(substitutes).length === 0) return null;
+  
+  return (
+    <div className="rounded-xl border-2 bg-purple-50 border-purple-300 p-4">
+      <h4 className="font-semibold text-sm mb-3 flex items-center gap-2 text-purple-800">
+        <span>👥</span> Alternate Faculty for Absent Staff
+      </h4>
+      <div className="space-y-4">
+        {Object.entries(substitutes).map(([facultyName, data]) => (
+          <div key={facultyName} className="bg-white rounded-lg p-3 border border-purple-200">
+            <div className="font-semibold text-purple-700 mb-2">
+              👤 {facultyName}
+            </div>
+            <div className="text-xs text-gray-600 mb-2">
+              Absent on: <span className="font-medium text-gray-700">{data.absent_days?.join(', ')}</span>
+            </div>
+            {data.subjects && Object.entries(data.subjects).map(([subject, dayMap]) => (
+              <div key={subject} className="ml-3 mt-2 text-xs">
+                <div className="text-gray-600 font-medium mb-1">
+                  📚 {subject.trim()}
+                </div>
+                {Object.entries(dayMap).map(([day, alternates]) => (
+                  <div key={day} className="ml-2 text-gray-700 py-1">
+                    <span className="text-purple-600 font-medium">{day}:</span>{' '}
+                    {Array.isArray(alternates) && alternates.length > 0 ? (
+                      <span className="text-gray-600">
+                        {alternates.slice(0, 3).map(alt => alt.trim()).join(' • ')}
+                        {alternates.length > 3 && ` +${alternates.length - 3} more`}
+                      </span>
+                    ) : (
+                      <span className="text-red-600 italic">No alternatives</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Main Component ─────────────────────────────────────────────────────────────
 
 export default function TimetableGenerator() {
@@ -75,8 +119,9 @@ export default function TimetableGenerator() {
   const unrecognized = parseDiag.unrecognized  || [];
   const autoAdj      = cu.auto_adjustments     || [];
   const constrWarn   = cu.constraint_warnings  || [];
+  const substitutes  = cu.substitutes          || {};
 
-  const hasDiagnostics = corrections.length || parseWarnings.length || unrecognized.length || autoAdj.length || constrWarn.length;
+  const hasDiagnostics = corrections.length || parseWarnings.length || unrecognized.length || autoAdj.length || constrWarn.length || Object.keys(substitutes).length > 0;
 
   return (
     <div className="max-w-3xl mx-auto py-8 px-4">
@@ -183,6 +228,8 @@ export default function TimetableGenerator() {
                 <span>🔍</span> Smart Scheduling Report
               </h3>
 
+              <SubstitutesPanel substitutes={substitutes} />
+              
               <DiagnosticPanel
                 title="Auto-corrected Names"
                 items={corrections}
