@@ -776,12 +776,20 @@ class TimetableScheduler:
 
         penalty_terms = []
         for sub in self.subjects:
-            c = sub.credits if sub.credits is not None else 3
+            try:
+                c = int(sub.credits or 3)
+            except (ValueError, TypeError):
+                c = 3
             for day in range(self.num_days):
                 for period in range(self.periods_per_day):
                     key = f"s{sub.id}_d{day}_p{period}"
                     if key in self.variables:
-                        penalty_terms.append(self.variables[key] * c * period)
+                        if sub.requires_lab:
+                            # Prefer afternoon for labs: penalize early periods heavily
+                            penalty_terms.append(self.variables[key] * (self.periods_per_day - period) * 10)
+                        else:
+                            # Prefer morning for high credits: penalize later periods based on credits
+                            penalty_terms.append(self.variables[key] * c * period)
 
         morning_penalty = sum(penalty_terms) if penalty_terms else 0
 
