@@ -222,6 +222,8 @@ const FacultyMapping = () => {
     };
 
     const filteredOverview = subjects.filter(sub => {
+        if (selectedClassId && sub.class_id !== selectedClassId) return false;
+
         const term = searchTerm.toLowerCase();
         const deptName = getSubjectDepartmentNames(sub).toLowerCase();
         const facName = sub.faculty_id ? getFacultyName(sub.faculty_id).toLowerCase() : '';
@@ -377,7 +379,11 @@ const FacultyMapping = () => {
             {/* Bottom Section: Overview Table */}
             <div className="bg-white rounded-xl shadow-lg border border-slate-100">
                 <div className="p-6 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                    <h2 className="text-lg font-bold text-slate-700">Global Faculty Mapping Overview</h2>
+                    <h2 className="text-lg font-bold text-slate-700">
+                        {selectedClassId 
+                            ? `Faculty Mapping Overview - ${getClassName(selectedClassId)}` 
+                            : 'Global Faculty Mapping Overview'}
+                    </h2>
 
                     {/* Search */}
                     <div className="relative w-64">
