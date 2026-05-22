@@ -459,12 +459,35 @@ class TimetableScheduler:
     def add_constraints(self):
         logger.info("Step 3/5: Adding constraints to the model...")
 
-        # 1. Subject Requirements: sum(all subject vars) == effective_hours
+        # Determine top 4 theory subjects by credits for each class to fill free slots
+        top_theory_subject_ids = set()
+        for class_obj in self.classes:
+            cls_subjects = [s for s in self.subjects if self._id_str(s.class_id) == self._id_str(class_obj.id) and not s.requires_lab]
+            cls_subjects.sort(key=lambda s: int(s.credits or 3), reverse=True)
+            for s in cls_subjects[:4]:
+                top_theory_subject_ids.add(self._id_str(s.id))
+
+        # 1. Subject Requirements: sum(all subject vars) >= effective_hours for top 4 theory, == for others
         for subject in self.subjects:
             all_sub_vars = self.vars_by_subject.get(subject.id, [])
             if all_sub_vars:
-                self.model.Add(sum(all_sub_vars) == self._effective_hours(subject))
+                if subject.requires_lab or self._id_str(subject.id) not in top_theory_subject_ids:
+                    self.model.Add(sum(all_sub_vars) == self._effective_hours(subject))
+                else:
+                    self.model.Add(sum(all_sub_vars) >= self._effective_hours(subject))
         logger.debug("Added Subject Requirement constraints")
+
+        # 1.5. Prevent Daily Monotony: Max 2 periods per day for theory subjects
+        for subject in self.subjects:
+            if not subject.requires_lab:
+                for day in range(self.num_days):
+                    day_vars = []
+                    for period in range(self.periods_per_day):
+                        key = f"s{subject.id}_d{day}_p{period}"
+                        if key in self.variables:
+                            day_vars.append(self.variables[key])
+                    if day_vars:
+                        self.model.Add(sum(day_vars) <= 2)
 
         # 2. Class Concurrency: Max 1 subject per class per period
         for class_obj in self.classes:
@@ -789,7 +812,11 @@ class TimetableScheduler:
                             penalty_terms.append(self.variables[key] * (self.periods_per_day - period) * 10)
                         else:
                             # Prefer morning for high credits: penalize later periods based on credits
-                            penalty_terms.append(self.variables[key] * c * period)
+                            # We ALSO add a massive reward (-penalty) for simply scheduling this subject
+                            # to eliminate free slots, prioritizing higher credits.
+                            base_reward = -10000 * c
+                            morning_penalty = c * period
+                            penalty_terms.append(self.variables[key] * (base_reward + morning_penalty))
 
         morning_penalty = sum(penalty_terms) if penalty_terms else 0
 
