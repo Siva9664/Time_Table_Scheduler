@@ -30,6 +30,14 @@ class AIConstraintParser:
         "thu": "Thursday", "fri": "Friday", "sat": "Saturday", "sun": "Sunday",
     }
 
+    NUMBER_WORDS = {
+        "one": 1, "once": 1, "single": 1,
+        "two": 2, "twice": 2,
+        "three": 3, "four": 4, "five": 5,
+        "six": 6, "seven": 7, "eight": 8, "nine": 9,
+        "ten": 10,
+    }
+
     def __init__(self, model=None, timeout_seconds=60, api_key=None,
                  api_base="https://api.openai.com/v1", context=None):
         self.model = model
@@ -99,20 +107,24 @@ class AIConstraintParser:
 3. faculty_time_unavailability – {{"type":"faculty_time_unavailability","faculty_name":"Dr. X","start_time":"10:15","end_time":"12:30"}}
 4. consecutive_periods   – {{"type":"consecutive_periods","subject_type":"lab"}}
 5. subject_max_per_day   – {{"type":"subject_max_per_day","subject_name":"Maths","max_per_day":1}}
-6. preferred_time_slot   – {{"type":"preferred_time_slot","target":"Physics","target_type":"subject","preference":"morning"}}
+6. preferred_time_slot   – {{"type":"preferred_time_slot","target":"Physics","target_type":"subject","preference":"morning","class_name":"CSE-A"}} (class_name is optional)
 7. avoid_time_slot       – {{"type":"avoid_time_slot","target":"CSE-A","target_type":"class","periods":[7,8]}}
 8. class_gap             – {{"type":"class_gap","class_name":"CSE-A","min_gap":1}}
-9. specific_time_slot    – {{"type":"specific_time_slot","target":"Physics","target_type":"subject","day":"Monday","period":2}}
+9. specific_time_slot    – {{"type":"specific_time_slot","target":"Physics","target_type":"subject","day":"Monday","period":2,"class_name":"CSE-A"}} (class_name is optional)
 
 ## Rules
 - Match names exactly to the context above.
 - Day names → full English (Monday, Tuesday, ...).
 - Extract EVERY constraint, not just the first.
+- If a subject constraint (specific_time_slot, preferred_time_slot, avoid_time_slot) applies to a specific class, you MUST add "class_name" with the exact matched class from the Context.
 - Return ONLY {{"constraints":[...]}}. No other text.
 
 ## Examples
 Input: "Dr. Raj cannot teach on Fridays and Saturdays"
 Output: {{"constraints":[{{"type":"faculty_unavailability","faculty_name":"Dr. Raj","unavailable_days":["Friday","Saturday"]}}]}}
+
+Input: "For Class CSE-A, MLops must be on Monday periods 4 and 5"
+Output: {{"constraints":[{{"type":"specific_time_slot","target":"MLops","target_type":"subject","day":"Monday","period":4,"class_name":"CSE-A"}},{{"type":"specific_time_slot","target":"MLops","target_type":"subject","day":"Monday","period":5,"class_name":"CSE-A"}}]}}
 
 Input: "Labs must be consecutive. Physics in the morning."
 Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{{"type":"preferred_time_slot","target":"Physics","target_type":"subject","preference":"morning"}}]}}
@@ -169,35 +181,47 @@ Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{
         norm_text = self._normalize_text(text)
         text_tokens = norm_text.split()
 
-        for name in names:
+        normalized_names = [(name, self._normalize_text(name)) for name in names]
+
+        # 1. Exact full-name word-boundary match → no typo.
+        for name, norm_name in normalized_names:
             norm_name = self._normalize_text(name)
             if not norm_name:
                 continue
-            # 1. Exact full-name word-boundary match → no typo
             if re.search(r'\b' + re.escape(norm_name) + r'\b', norm_text):
                 return (name, None)
-            # 2. All key tokens present — check if any token differs (typo detection)
-            name_tokens = [t for t in norm_name.split() if len(t) >= 3]
+
+        # 2. Exact key-token match across all names before fuzzy correction.
+        for name, norm_name in normalized_names:
+            if not norm_name:
+                continue
+            name_tokens = [t for t in norm_name.split() if len(t) >= 2]
+            if name_tokens and all(nt in text_tokens for nt in name_tokens):
+                return (name, None)
+
+        # 3. All key tokens present with near-exact typo correction.
+        for name, norm_name in normalized_names:
+            if not norm_name:
+                continue
+            name_tokens = [t for t in norm_name.split() if len(t) >= 2]
             if name_tokens:
                 typo_found = None
                 all_present = True
                 for nt in name_tokens:
-                    if nt in text_tokens:
-                        continue  # exact match — no typo for this token
                     # Check near-exact (e.g. "shivaa" vs "shiva")
                     close = difflib.get_close_matches(nt, text_tokens, n=1, cutoff=0.78)
                     if close:
-                        typo_found = close[0]  # what the user typed (the misspelling)
+                        if close[0] != nt:
+                            typo_found = close[0]  # what the user typed (the misspelling)
                     else:
                         all_present = False
                         break
                 if all_present:
                     return (name, typo_found)  # typo_found is the misspelling or None if all exact
 
-        # 3. Lower-cutoff fuzzy for more distant typos
-        for name in names:
-            norm_name = self._normalize_text(name)
-            name_tokens = [t for t in norm_name.split() if len(t) >= 3]
+        # 4. Lower-cutoff fuzzy for more distant typos
+        for name, norm_name in normalized_names:
+            name_tokens = [t for t in norm_name.split() if len(t) >= 2]
             if not name_tokens:
                 continue
             matched, typo_pair = 0, None
@@ -303,11 +327,107 @@ Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{
         period_section = re.sub(r"period[s]?\s*", "PERIOD ", lower)
         raw = re.findall(r"(?:PERIOD\s*)?(\d+)", period_section)
         # Only pick up numbers that appear after "period" or "avoid period N and M"
-        for m2 in re.finditer(r"(?:period[s]?)\s*([\d\s,and]+)", lower):
+        for m2 in re.finditer(r"(?:period[s]?)\s*([\d\s,and&]+)", lower):
             nums = re.findall(r"\d+", m2.group(1))
             periods.extend(int(n) for n in nums if 1 <= int(n) <= 20)
 
         return sorted(set(p for p in periods if 1 <= p <= 20))
+
+    def _parse_count(self, text: str, default: int = 1) -> int:
+        lower = text.lower()
+        digit = re.search(r"\b(\d+)\b", lower)
+        if digit:
+            return int(digit.group(1))
+        for word, value in self.NUMBER_WORDS.items():
+            if re.search(r"\b" + re.escape(word) + r"\b", lower):
+                return value
+        return default
+
+    def _target_class_name(self, active_class: Optional[str], cls: Optional[str], subject: Optional[str]) -> Optional[str]:
+        if subject and active_class:
+            return active_class
+        if subject and cls:
+            return cls
+        return None
+
+    @staticmethod
+    def _add_class_name(constraint: Dict[str, Any], class_name: Optional[str]) -> Dict[str, Any]:
+        if class_name:
+            constraint["class_name"] = class_name
+        return constraint
+
+    @staticmethod
+    def _contains_any(text: str, phrases: List[str]) -> bool:
+        return any(phrase in text for phrase in phrases)
+
+    def _parse_bare_period_numbers(self, text: str) -> List[int]:
+        """Extract bare period numbers from compact timetable lines."""
+        periods = []
+        for raw in re.findall(r"\b\d+\b", text):
+            try:
+                period = int(raw)
+            except ValueError:
+                continue
+            if 1 <= period <= 20:
+                periods.append(period)
+        return sorted(set(periods))
+
+    def _class_from_header(self, chunk: str, class_names: List[str]) -> Optional[str]:
+        """Find the active class in headers like 'For AIML 2 A Class' or 'For B Class'."""
+        lower = chunk.lower()
+        if "class" not in lower and not re.search(r"\bfor\b", lower):
+            return None
+
+        direct = self._context_match(chunk, class_names)
+        if direct:
+            return direct
+
+        header_match = re.search(r"\bfor\s+(.+?)\s+class\b", chunk, flags=re.IGNORECASE)
+        if not header_match:
+            return None
+
+        header_norm = self._normalize_text(header_match.group(1))
+        if not header_norm:
+            return None
+
+        header_tokens = header_norm.split()
+        for class_name in class_names:
+            class_norm = self._normalize_text(class_name)
+            class_tokens = class_norm.split()
+            if not class_tokens:
+                continue
+            if header_norm == class_norm or all(token in class_tokens for token in header_tokens):
+                return class_name
+            if len(header_tokens) == 1 and header_tokens[0] == class_tokens[-1]:
+                return class_name
+        return None
+
+    def _append_specific_slot_constraints(
+        self,
+        constraints: List[Dict[str, Any]],
+        target: str,
+        periods: List[int],
+        days: List[str],
+        class_name: Optional[str] = None,
+    ) -> bool:
+        if not target or not periods:
+            return False
+
+        produced = False
+        for period in periods:
+            c: Dict[str, Any] = {
+                "type": "specific_time_slot",
+                "target": target,
+                "target_type": "subject",
+                "period": period,
+            }
+            if days:
+                c["day"] = days[0]
+            if class_name:
+                c["class_name"] = class_name
+            constraints.append(c)
+            produced = True
+        return produced
 
     # ── Text splitting (sentence-level only, NOT on "and") ──────────────────────
 
@@ -332,9 +452,13 @@ Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{
         faculty_names = self.context.get("faculty_names", [])
         subject_names = self.context.get("subject_names", [])
         class_names   = self.context.get("class_names",   [])
+        active_class: Optional[str] = None
+        active_day: Optional[str] = None
 
         for chunk in self._split_text(text):
             produced = False
+            produced_by_header = False
+            produced_specific = False
             lower = chunk.lower()
 
             faculty = self._context_match(chunk, faculty_names)
@@ -344,9 +468,39 @@ Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{
             # (prevents "Physics" from accidentally matching "CSE-A" via a partial word)
             cls = self._context_match(chunk, class_names) if not subject else None
 
+            header_class = self._class_from_header(chunk, class_names)
+            if header_class:
+                active_class = header_class
+                produced = True
+                produced_by_header = True
+
+            chunk_days = self._parse_day_names(chunk)
+            if chunk_days and not subject and not faculty and not self._parse_period_numbers(chunk):
+                active_day = chunk_days[0]
+                produced = True
+            elif chunk_days:
+                active_day = chunk_days[0]
+
+            UNAVAIL_PHRASES = [
+                "not available", "unavailable", "cannot teach", "can't teach",
+                "cant teach", "will not teach", "wont teach", "won't teach",
+                "not come", "absent", "on leave", "not teaching",
+                "cannot come", "can't come", "cant come", "avoid faculty",
+                "no faculty", "not free",
+            ]
+
             # ── 1. faculty_availability ─────────────────────────────────────
-            if faculty and re.search(r"only\s+available|available\s+only", lower):
-                days = self._parse_day_names(chunk)
+            AVAIL_PHRASES = [
+                "only available", "available only", "available on", "available in",
+                "can teach on", "can come on", "free on", "free in",
+                "teaches on", "will teach on", "comes on",
+            ]
+            if (
+                faculty
+                and self._contains_any(lower, AVAIL_PHRASES)
+                and not self._contains_any(lower, UNAVAIL_PHRASES)
+            ):
+                days = chunk_days
                 if days:
                     constraints.append({
                         "type": "faculty_availability",
@@ -356,12 +510,6 @@ Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{
                     produced = True
 
             # ── 2. faculty_unavailability ───────────────────────────────────
-            UNAVAIL_PHRASES = [
-                "not available", "unavailable", "cannot teach", "can't teach",
-                "cant teach", "will not teach", "wont teach", "won't teach",
-                "not come", "absent", "on leave", "not teaching",
-                "cannot come", "can't come", "cant come",
-            ]
             if faculty and any(p in lower for p in UNAVAIL_PHRASES):
                 time_matches = list(re.finditer(r"(\d{1,2}[:.]\d{2}\s*(?:am|pm)?)\s*(?:to|-)\s*(\d{1,2}[:.]\d{2}\s*(?:am|pm)?)", lower))
                 if time_matches:
@@ -374,7 +522,7 @@ Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{
                         })
                         produced = True
                 else:
-                    days = self._parse_day_names(chunk)
+                    days = chunk_days
                     if days:
                         constraints.append({
                             "type": "faculty_unavailability",
@@ -385,7 +533,7 @@ Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{
 
             # ── 3. consecutive_periods ──────────────────────────────────────
             CONSEC_PHRASES = ["consecutive", "continuous", "back to back", "back-to-back", "together"]
-            if any(p in lower for p in CONSEC_PHRASES):
+            if any(p in lower for p in CONSEC_PHRASES) or ("lab" in lower and "same day" in lower):
                 sub_type = "lab" if "lab" in lower else (subject or "lab")
                 if isinstance(sub_type, str):
                     constraints.append({"type": "consecutive_periods", "subject_type": sub_type})
@@ -395,7 +543,8 @@ Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{
             MAX_PHRASES = [
                 "not more than once", "only once", "once a day",
                 "one time per day", "at most once", "maximum once",
-                "not more than one", "no more than once",
+                "not more than one", "no more than once", "once daily",
+                "single period per day",
             ]
             if subject and any(p in lower for p in MAX_PHRASES):
                 constraints.append({
@@ -406,31 +555,44 @@ Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{
                 produced = True
 
             # "max N times per day"
-            max_n = re.search(r"(?:max|maximum|at most)\s+(\d+)\s+(?:time|period|class|hour)", lower)
+            max_n = re.search(
+                r"(?:max|maximum|at most|not more than|no more than|limit)\s+"
+                r"(\d+|one|once|two|twice|three|four|five|six|seven|eight|nine|ten)\s+"
+                r"(?:time|times|period|periods|class|classes|hour|hours)",
+                lower,
+            )
             if subject and max_n:
                 constraints.append({
                     "type": "subject_max_per_day",
                     "subject_name": subject,
-                    "max_per_day": int(max_n.group(1)),
+                    "max_per_day": self._parse_count(max_n.group(1)),
                 })
                 produced = True
 
             # ── 5. preferred_time_slot ──────────────────────────────────────
             PREF_MAP = {
-                "morning":     ["morning", "early morning", "first half"],
+                "morning":     ["morning", "early morning", "before lunch", "first half"],
                 "afternoon":   ["afternoon", "after lunch", "post lunch", "second half"],
                 "first_half":  ["first half"],
                 "second_half": ["second half"],
             }
+            PREF_TRIGGERS = [
+                "prefer", "preferred", "preference", "should be", "must be",
+                "keep", "place", "schedule", "assign", "better in", "need in",
+            ]
             for pref, kws in PREF_MAP.items():
-                if any(kw in lower for kw in kws):
+                if any(kw in lower for kw in kws) and (
+                    self._contains_any(lower, PREF_TRIGGERS)
+                    or not self._parse_period_numbers(chunk)
+                ):
                     if subject:
-                        constraints.append({
+                        class_name = self._target_class_name(active_class, cls, subject)
+                        constraints.append(self._add_class_name({
                             "type": "preferred_time_slot",
                             "target": subject,
                             "target_type": "subject",
                             "preference": pref,
-                        })
+                        }, class_name))
                         produced = True
                     elif cls:
                         constraints.append({
@@ -454,49 +616,88 @@ Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{
             AVOID_PHRASES = [
                 "avoid", "not in period", "should not", "don't schedule",
                 "do not schedule", "no class at", "block period", "not at period",
+                "not be in period", "not be on period", "shouldn't be",
+                "dont schedule", "keep away from", "exclude period",
             ]
             periods = self._parse_period_numbers(chunk)
+            if not periods and self._contains_any(lower, AVOID_PHRASES):
+                periods = self._parse_bare_period_numbers(chunk)
             if periods and any(p in lower for p in AVOID_PHRASES):
                 target = cls or subject
                 t_type = "class" if cls else ("subject" if subject else None)
                 if target and t_type:
-                    constraints.append({
+                    class_name = self._target_class_name(active_class, cls, subject)
+                    constraints.append(self._add_class_name({
                         "type": "avoid_time_slot",
                         "target": target,
                         "target_type": t_type,
                         "periods": periods,
-                    })
+                    }, class_name if t_type == "subject" else None))
                     produced = True
 
             # ── 7. class_gap ────────────────────────────────────────────────
-            GAP_KWS = ["gap", "free period", "break between", "free slot", "rest"]
-            gap_m = re.search(r"(\d+)\s*(?:period|slot|free|hour|gap)", lower)
-            if cls and any(k in lower for k in GAP_KWS) and gap_m:
+            GAP_KWS = ["gap", "free period", "break between", "free slot", "rest", "interval"]
+            gap_m = re.search(
+                r"(\d+|one|single|two|three|four|five)\s*"
+                r"(?:period|periods|slot|slots|free|hour|hours|gap|gaps)",
+                lower,
+            )
+            gap_class = cls or active_class
+            if gap_class and any(k in lower for k in GAP_KWS) and gap_m:
                 constraints.append({
                     "type": "class_gap",
-                    "class_name": cls,
-                    "min_gap": int(gap_m.group(1)),
+                    "class_name": gap_class,
+                    "min_gap": self._parse_count(gap_m.group(1)),
                 })
                 produced = True
 
             # ── 8. specific_time_slot ───────────────────────────────────────
             SPECIFIC_KWS = ["schedule on", "place on", "fix on", "must be on",
-                            "assign to period", "keep on", "should be on"]
+                            "assign to period", "keep on", "should be on",
+                            "exactly on", "fixed on", "locked on"]
             if any(k in lower for k in SPECIFIC_KWS) and periods:
-                days = self._parse_day_names(chunk)
-                target = subject or cls
-                t_type = "subject" if subject else ("class" if cls else None)
-                if target and t_type:
-                    c: Dict[str, Any] = {
-                        "type": "specific_time_slot",
-                        "target": target,
-                        "target_type": t_type,
-                        "period": periods[0],
-                    }
-                    if days:
-                        c["day"] = days[0]
-                    constraints.append(c)
-                    produced = True
+                days = chunk_days or ([active_day] if active_day else [])
+                if subject:
+                    added_specific = self._append_specific_slot_constraints(
+                        constraints,
+                        subject,
+                        periods,
+                        days,
+                        active_class,
+                    )
+                    produced = added_specific or produced
+                    produced_specific = added_specific or produced_specific
+                elif cls:
+                    for period in periods:
+                        c: Dict[str, Any] = {
+                            "type": "specific_time_slot",
+                            "target": cls,
+                            "target_type": "class",
+                            "period": period,
+                        }
+                        if days:
+                            c["day"] = days[0]
+                        constraints.append(c)
+                        produced = True
+                        produced_specific = True
+
+            # Compact fixed-slot style:
+            # "Mlops monday 4 and 5", "Wednesday 8,9 Mlops", "Friday FCV 3,8,9"
+            if subject and not produced_specific:
+                days = chunk_days or ([active_day] if active_day else [])
+                compact_chunk = chunk
+                if produced_by_header:
+                    compact_chunk = re.sub(r"\bfor\s+.+?\s+class\b", "", compact_chunk, flags=re.IGNORECASE)
+                terse_periods = periods or self._parse_bare_period_numbers(compact_chunk)
+                if days and terse_periods:
+                    added_specific = self._append_specific_slot_constraints(
+                        constraints,
+                        subject,
+                        terse_periods,
+                        days,
+                        active_class,
+                    )
+                    produced = added_specific or produced or produced_by_header
 
             # Track unrecognized
             if not produced and len(chunk.split()) > 2:
@@ -572,6 +773,8 @@ Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{
                     }
                     if c.get("soft") is not None:
                         nc["soft"] = bool(c["soft"])
+                    if c.get("class_name"):
+                        nc["class_name"] = str(c["class_name"])
                     out.append(nc)
 
             elif t in {"avoid_time_slot", "blocked_periods", "avoid_periods"}:
@@ -585,12 +788,15 @@ Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{
                 except (TypeError, ValueError):
                     periods = []
                 if target and periods:
-                    out.append({
+                    nc3 = {
                         "type": "avoid_time_slot",
                         "target": str(target),
                         "target_type": str(t_type),
                         "periods": periods,
-                    })
+                    }
+                    if c.get("class_name"):
+                        nc3["class_name"] = str(c["class_name"])
+                    out.append(nc3)
 
             elif t in {"class_gap", "gap", "free_period"}:
                 cn = c.get("class_name") or c.get("class") or ""
@@ -621,6 +827,8 @@ Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{
                     }
                     if day:
                         nc2["day"] = day
+                    if c.get("class_name"):
+                        nc2["class_name"] = str(c["class_name"])
                     out.append(nc2)
             else:
                 out.append(c)

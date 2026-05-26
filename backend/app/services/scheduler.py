@@ -54,6 +54,8 @@ class TimetableScheduler:
         self._credit_extra_capacities: Dict[str, int] = {}  # subject_id -> extra slots for free-period fill
         self.auto_adjustments: List[str] = []        # human-readable auto-fix messages
         self.constraint_warnings: List[str] = []     # soft-fail warnings from custom constraints
+        self.specific_constrained_slots = set()
+        self.specific_preference_slots = set()
 
         # Optimization Caches
         self.vars_by_faculty = {}  # faculty_id -> day -> list of {'start', 'end', 'var', 'period'}
@@ -132,6 +134,34 @@ class TimetableScheduler:
         self.faculty = [self._wrap(d) for d in self.db["faculty"].find(fac_query)]
 
         # Legacy assignment support is disabled.
+
+        # Auto-adjust subject hours only for explicitly hard fixed-slot constraints.
+        # PDF/given slots are preferences by default, so they should not inflate load.
+        for sub in self.subjects:
+            num_slots = 0
+            for c in self.custom_constraints:
+                if (
+                    c.get("type") == "specific_time_slot"
+                    and c.get("target_type", "subject") == "subject"
+                    and self._is_hard_specific_constraint(c)
+                ):
+                    if self._matches_subject(c.get("target", ""), sub):
+                        class_name = c.get("class_name")
+                        if class_name:
+                            class_obj = self.class_map.get(self._id_str(sub.class_id))
+                            if class_obj and not self._matches_class(class_name, class_obj):
+                                continue
+                        num_slots += 1
+            
+            if num_slots > 0:
+                current_hours = self._effective_hours(sub)
+                if num_slots > current_hours:
+                    self._adjusted_hours[sub.id] = num_slots
+                    self.auto_adjustments.append(
+                        f"Subject '{sub.name}' (Class: {self.class_map.get(self._id_str(sub.class_id)).name if self.class_map.get(self._id_str(sub.class_id)) else 'Unknown'}) "
+                        f"hours increased from {current_hours} to {num_slots} "
+                        f"to accommodate specific_time_slot constraints."
+                    )
 
         summary = {
             "departments": len(self.departments), "batches": len(self.batches),
@@ -226,6 +256,11 @@ class TimetableScheduler:
         value = str(value or "").strip().lower()
         return re.sub(r"[^a-z0-9]+", " ", value).strip()
 
+    @staticmethod
+    def _is_hard_specific_constraint(constraint: Dict[str, Any]) -> bool:
+        """Specific slots are preferences unless explicitly marked hard/strict."""
+        return bool(constraint.get("hard") or constraint.get("strict") or constraint.get("soft") is False)
+
     def _effective_hours(self, subject: _Obj) -> int:
         """Return hours/week for a subject: adjusted > explicit > credits mapping."""
         if subject.id in self._adjusted_hours:
@@ -311,10 +346,18 @@ class TimetableScheduler:
         candidate = self._normalize_match_text(candidate)
         if not target or not candidate:
             return False
-        if target == candidate or target in candidate:
+        if target == candidate:
             return True
         target_tokens = target.split()
-        return bool(target_tokens) and all(token in candidate for token in target_tokens)
+        candidate_tokens = candidate.split()
+        
+        # Distinguish labs from theory
+        is_target_lab = "lab" in target_tokens
+        is_candidate_lab = "lab" in candidate_tokens
+        if is_target_lab != is_candidate_lab:
+            return False
+            
+        return bool(target_tokens) and all(token in candidate_tokens for token in target_tokens)
 
     def _class_display_name(self, class_obj: _Obj) -> str:
         return f"{class_obj.name or ''} {class_obj.section or ''}".strip()
@@ -520,7 +563,7 @@ class TimetableScheduler:
                     var = self.model.NewBoolVar(var_name)
                     self.variables[var_name] = var
 
-                    entry = {'start': start, 'end': end, 'var': var, 'period': period}
+                    entry = {'start': start, 'end': end, 'var': var, 'period': period, 'subject_id': subject.id}
                     if subject_faculty_id in self.vars_by_faculty:
                         self.vars_by_faculty[subject_faculty_id][day].append(entry)
 
@@ -530,6 +573,34 @@ class TimetableScheduler:
 
     def add_constraints(self):
         logger.info("Step 3/5: Adding constraints to the model...")
+
+        specific_constrained_slots = set()
+        specific_preference_slots = set()
+        if self.custom_constraints:
+            for c in self.custom_constraints:
+                if c.get("type") == "specific_time_slot" and c.get("target_type", "subject") == "subject":
+                    target = str(c.get("target", ""))
+                    period_num = c.get("period")
+                    day_name = c.get("day")
+                    if period_num is not None and day_name:
+                        try:
+                            p_idx = int(period_num) - 1
+                        except (TypeError, ValueError):
+                            continue
+                        day_idx = next((i for i, d in enumerate(self.working_days) if d.lower() == day_name.lower()), None)
+                        if day_idx is not None:
+                            matched_subjects = self._subjects_for_target(target, "subject")
+                            class_name = c.get("class_name")
+                            if class_name:
+                                matching_class_ids = {self._id_str(cls.id) for cls in self.classes if self._matches_class(class_name, cls)}
+                                matched_subjects = [sub for sub in matched_subjects if self._id_str(sub.class_id) in matching_class_ids]
+                            for sub in matched_subjects:
+                                slot = (sub.id, day_idx, p_idx)
+                                specific_constrained_slots.add(slot)
+                                if not self._is_hard_specific_constraint(c):
+                                    specific_preference_slots.add(slot)
+        self.specific_constrained_slots = specific_constrained_slots
+        self.specific_preference_slots = specific_preference_slots
 
         self._credit_extra_capacities = self._compute_credit_extra_capacities()
         self.shortage_vars = []
@@ -560,7 +631,22 @@ class TimetableScheduler:
                         if key in self.variables:
                             day_vars.append(self.variables[key])
                     if day_vars:
-                        self.model.Add(sum(day_vars) <= 2)
+                        # Allow higher limit if specific slots are requested for this subject on this day
+                        day_name = self.working_days[day].lower()
+                        specific_slots_count = 0
+                        if self.custom_constraints:
+                            for c in self.custom_constraints:
+                                if c.get("type") == "specific_time_slot" and c.get("target_type", "subject") == "subject":
+                                    if self._matches_subject(c.get("target", ""), subject) and c.get("day", "").lower() == day_name:
+                                        class_name = c.get("class_name")
+                                        if not class_name:
+                                            specific_slots_count += 1
+                                        else:
+                                            class_obj = self.class_map.get(self._id_str(subject.class_id))
+                                            if class_obj and self._matches_class(class_name, class_obj):
+                                                specific_slots_count += 1
+                        limit = max(2, specific_slots_count)
+                        self.model.Add(sum(day_vars) <= limit)
 
         # 2. Class occupancy: prefer exactly one subject in every usable class slot.
         for class_obj in self.classes:
@@ -613,6 +699,19 @@ class TimetableScheduler:
         # 4. DEFAULT: Labs — all hours on ONE day, and consecutive within that day
         for sub in self.subjects:
             if not sub.requires_lab:
+                continue
+
+            # Soft PDF/given slots should guide lab placement, while the default
+            # lab block rule still keeps labs together on one day.
+            has_specific_slots = any(
+                c.get("type") == "specific_time_slot" 
+                and c.get("target_type", "subject") == "subject"
+                and self._is_hard_specific_constraint(c)
+                and self._matches_subject(c.get("target", ""), sub)
+                for c in self.custom_constraints
+            )
+            if has_specific_slots:
+                logger.info(f"Bypassing default lab constraints for '{sub.name}' due to specific_time_slot constraints")
                 continue
 
             hours = self._effective_hours(sub)
@@ -749,6 +848,11 @@ class TimetableScheduler:
                 non_preferred = set(range(self.periods_per_day)) - preferred_periods
 
                 matched_subjects = self._subjects_for_target(target, target_type)
+                class_name = constraint.get("class_name")
+                if class_name:
+                    matching_class_ids = {self._id_str(cls.id) for cls in self.classes if self._matches_class(class_name, cls)}
+                    matched_subjects = [sub for sub in matched_subjects if self._id_str(sub.class_id) in matching_class_ids]
+
                 for sub in matched_subjects:
                     for day in range(self.num_days):
                         for p in non_preferred:
@@ -767,6 +871,11 @@ class TimetableScheduler:
                 blocked_periods = [int(p) - 1 for p in constraint.get("periods", [])]  # convert 1-indexed → 0-indexed
 
                 matched_subjects = self._subjects_for_target(target, target_type)
+                class_name = constraint.get("class_name")
+                if class_name:
+                    matching_class_ids = {self._id_str(cls.id) for cls in self.classes if self._matches_class(class_name, cls)}
+                    matched_subjects = [sub for sub in matched_subjects if self._id_str(sub.class_id) in matching_class_ids]
+
                 for sub in matched_subjects:
                     for day in range(self.num_days):
                         for p in blocked_periods:
@@ -849,9 +958,18 @@ class TimetableScheduler:
                 target_type = str(constraint.get("target_type", "subject")).lower()
                 period_num = constraint.get("period")
                 if period_num is not None:
-                    p_idx = int(period_num) - 1
+                    try:
+                        p_idx = int(period_num) - 1
+                    except (TypeError, ValueError):
+                        self._constraint_error(f"specific_time_slot: invalid period '{period_num}' for target '{target}'")
+                        continue
                     day_name = constraint.get("day")
                     matched_subjects = self._subjects_for_target(target, target_type)
+                    class_name = constraint.get("class_name")
+                    if class_name:
+                        matching_class_ids = {self._id_str(cls.id) for cls in self.classes if self._matches_class(class_name, cls)}
+                        matched_subjects = [sub for sub in matched_subjects if self._id_str(sub.class_id) in matching_class_ids]
+
                     for sub in matched_subjects:
                         sub_vars = []
                         for day_idx in range(self.num_days):
@@ -861,10 +979,16 @@ class TimetableScheduler:
                                 key = f"s{sub.id}_d{day_idx}_p{p_idx}"
                                 if key in self.variables:
                                     sub_vars.append(self.variables[key])
-                        if sub_vars:
+                        if sub_vars and self._is_hard_specific_constraint(constraint):
                             self.model.Add(sum(sub_vars) >= 1)
+                        elif not sub_vars:
+                            self._constraint_error(
+                                f"specific_time_slot preference unavailable: '{target}' has no feasible variable "
+                                f"for period {period_num}" + (f" on {day_name}" if day_name else "")
+                            )
                     if matched_subjects:
-                        logger.debug(f"Applied specific_time_slot for '{target}' ({target_type}, period={period_num}, day={day_name})")
+                        mode = "hard" if self._is_hard_specific_constraint(constraint) else "preferred"
+                        logger.debug(f"Applied {mode} specific_time_slot for '{target}' ({target_type}, period={period_num}, day={day_name})")
                     else:
                         self._constraint_error(f"specific_time_slot: target '{target}' ({target_type}) not found in loaded data")
 
@@ -913,6 +1037,14 @@ class TimetableScheduler:
                             credit_fill_reward = -100 * credit
                             equal_morning_penalty = period * 3
                             penalty_terms.append(self.variables[key] * (credit_fill_reward + equal_morning_penalty))
+
+        # Treat user/PDF fixed slots as the first scheduling priority after
+        # feasibility and required-hour coverage. Remaining slots are then
+        # balanced by the normal distribution objective.
+        for sub_id, day, period in getattr(self, "specific_preference_slots", set()):
+            key = f"s{sub_id}_d{day}_p{period}"
+            if key in self.variables:
+                penalty_terms.append(self.variables[key] * -60000)
 
         morning_fairness_terms = []
         for class_obj in self.classes:
@@ -1042,11 +1174,13 @@ class TimetableScheduler:
                                 if fac:
                                     faculty_name = fac.name
 
+                            is_custom = (sub.id, day_idx, p_idx) in self.specific_constrained_slots
                             slot_info.update({
                                 "subject": sub.name,
                                 "subject_code": sub.code,
                                 "faculty": faculty_name,
-                                "is_lab": sub.requires_lab
+                                "is_lab": sub.requires_lab,
+                                "is_custom": is_custom
                             })
                             break
                     day_schedule.append(slot_info)
@@ -1104,6 +1238,49 @@ class TimetableScheduler:
                                     f"faculty_unavailability violated: {slot_faculty} is scheduled for "
                                     f"{slot.get('subject')} in {class_schedule.get('class_name')} on {day_name}."
                                 )
+
+            elif c_type == "specific_time_slot":
+                target = str(constraint.get("target", ""))
+                target_type = str(constraint.get("target_type", "subject")).lower()
+                class_name = str(constraint.get("class_name", ""))
+                day_filter = str(constraint.get("day", "")).lower()
+                try:
+                    period = int(constraint.get("period"))
+                except (TypeError, ValueError):
+                    continue
+
+                matched_any_class = False
+                satisfied = False
+                for class_schedule in schedule.values():
+                    schedule_class_name = str(class_schedule.get("class_name", ""))
+                    if class_name and not self._matches_text(class_name, schedule_class_name):
+                        continue
+                    matched_any_class = True
+
+                    for day_name, slots in class_schedule.get("timetable", {}).items():
+                        if day_filter and day_name.lower() != day_filter:
+                            continue
+                        for slot in slots:
+                            if slot.get("period") != period:
+                                continue
+                            if target_type == "class":
+                                satisfied = bool(slot.get("subject"))
+                            else:
+                                satisfied = self._matches_text(target, slot.get("subject"))
+                            if satisfied:
+                                break
+                        if satisfied:
+                            break
+                    if satisfied:
+                        break
+
+                if matched_any_class and not satisfied:
+                    label = "hard constraint" if self._is_hard_specific_constraint(constraint) else "preference"
+                    errors.append(
+                        f"specific_time_slot {label} not met: {target} "
+                        f"period {period}" + (f" on {constraint.get('day')}" if constraint.get("day") else "") +
+                        (f" for {class_name}" if class_name else "") + "."
+                    )
 
         return errors
 
