@@ -51,12 +51,14 @@ class TimetableScheduler:
 
         # Smart correction state
         self._adjusted_hours: Dict[str, int] = {}   # subject_id -> corrected hours
+        self._credit_extra_capacities: Dict[str, int] = {}  # subject_id -> extra slots for free-period fill
         self.auto_adjustments: List[str] = []        # human-readable auto-fix messages
         self.constraint_warnings: List[str] = []     # soft-fail warnings from custom constraints
 
         # Optimization Caches
         self.vars_by_faculty = {}  # faculty_id -> day -> list of {'start', 'end', 'var', 'period'}
         self.vars_by_subject = {}  # subject_id -> list of BoolVar
+        self.empty_slot_vars = []
 
 
     def _wrap(self, doc: dict) -> _Obj:
@@ -233,6 +235,76 @@ class TimetableScheduler:
             return int(raw)
         credits = int(subject.credits or 3)
         return CREDITS_TO_HOURS.get(credits, credits)
+
+    def _credit_value(self, subject: _Obj) -> int:
+        try:
+            return max(1, int(subject.credits or 3))
+        except (ValueError, TypeError):
+            return 3
+
+    def _credit_extra_capacity(self, subject: _Obj) -> int:
+        """
+        Optional extra periods used to occupy otherwise-free class slots.
+        Higher-credit theory subjects can receive more extra periods, but no
+        subject is allowed to expand without a cap.
+        """
+        subject_id = self._id_str(getattr(subject, "id", None))
+        if subject_id in self._credit_extra_capacities:
+            return self._credit_extra_capacities[subject_id]
+        if subject.requires_lab:
+            return 0
+        return min(3, max(0, self._credit_value(subject) - 2))
+
+    def _compute_credit_extra_capacities(self) -> Dict[str, int]:
+        """
+        Allocate each class's free period capacity to its highest-credit theory
+        subjects. This keeps required credit hours intact while giving the
+        solver enough capped capacity to occupy every usable class slot.
+        """
+        capacities: Dict[str, int] = {}
+        for class_obj in self.classes:
+            class_subjects = [
+                sub for sub in self.subjects
+                if self._id_str(sub.class_id) == self._id_str(class_obj.id)
+            ]
+            if not class_subjects:
+                continue
+
+            usable_slots = 0
+            for day in range(self.num_days):
+                for period in range(self.periods_per_day):
+                    if any(f"s{sub.id}_d{day}_p{period}" in self.variables for sub in class_subjects):
+                        usable_slots += 1
+
+            required_slots = sum(self._effective_hours(sub) for sub in class_subjects)
+            free_slots = max(0, usable_slots - required_slots)
+            theory_subjects = [
+                sub for sub in class_subjects
+                if not sub.requires_lab and self.vars_by_subject.get(sub.id)
+            ]
+            if free_slots <= 0 or not theory_subjects:
+                continue
+
+            allocations = {self._id_str(sub.id): 0 for sub in theory_subjects}
+            remaining = free_slots
+            for sub in sorted(theory_subjects, key=lambda s: (-self._credit_value(s), s.name or "", s.code or "")):
+                if remaining <= 0:
+                    break
+                sub_id = self._id_str(sub.id)
+                target = self._effective_hours(sub)
+                available = len(self.vars_by_subject.get(sub.id, []))
+                max_extra = max(0, available - target)
+                assigned = min(remaining, max_extra)
+                if assigned <= 0:
+                    continue
+                allocations[sub_id] += assigned
+                remaining -= assigned
+
+            for sub_id, extra in allocations.items():
+                if extra > 0:
+                    capacities[sub_id] = extra
+
+        return capacities
 
     def _matches_text(self, target: str, candidate: str) -> bool:
         target = self._normalize_match_text(target)
@@ -459,25 +531,23 @@ class TimetableScheduler:
     def add_constraints(self):
         logger.info("Step 3/5: Adding constraints to the model...")
 
-        # Determine top 4 theory subjects by credits for each class to fill free slots
-        top_theory_subject_ids = set()
-        for class_obj in self.classes:
-            cls_subjects = [s for s in self.subjects if self._id_str(s.class_id) == self._id_str(class_obj.id) and not s.requires_lab]
-            cls_subjects.sort(key=lambda s: int(s.credits or 3), reverse=True)
-            for s in cls_subjects[:4]:
-                top_theory_subject_ids.add(self._id_str(s.id))
-
+        self._credit_extra_capacities = self._compute_credit_extra_capacities()
         self.shortage_vars = []
-        # 1. Subject Requirements: sum(all subject vars) >= effective_hours for top 4 theory, == for others
+        # 1. Subject Requirements: credits define target hours; theory subjects
+        # may use bounded credit-based extra periods to fill free slots.
         for subject in self.subjects:
             all_sub_vars = self.vars_by_subject.get(subject.id, [])
             if all_sub_vars:
+                scheduled = sum(all_sub_vars)
+                target_hours = self._effective_hours(subject)
                 shortage = self.model.NewIntVar(0, 100, f"shortage_s{subject.id}")
                 self.shortage_vars.append(shortage)
-                if subject.requires_lab or self._id_str(subject.id) not in top_theory_subject_ids:
-                    self.model.Add(sum(all_sub_vars) + shortage == self._effective_hours(subject))
+                if subject.requires_lab:
+                    self.model.Add(scheduled + shortage == target_hours)
                 else:
-                    self.model.Add(sum(all_sub_vars) + shortage >= self._effective_hours(subject))
+                    extra_capacity = self._credit_extra_capacity(subject)
+                    self.model.Add(scheduled + shortage >= target_hours)
+                    self.model.Add(scheduled <= target_hours + extra_capacity)
         logger.debug("Added Subject Requirement constraints")
 
         # 1.5. Prevent Daily Monotony: Max 2 periods per day for theory subjects
@@ -492,7 +562,7 @@ class TimetableScheduler:
                     if day_vars:
                         self.model.Add(sum(day_vars) <= 2)
 
-        # 2. Class Concurrency: Max 1 subject per class per period
+        # 2. Class occupancy: prefer exactly one subject in every usable class slot.
         for class_obj in self.classes:
             class_subjects = [s for s in self.subjects if self._id_str(s.class_id) == self._id_str(class_obj.id)]
             for day in range(self.num_days):
@@ -503,8 +573,10 @@ class TimetableScheduler:
                         if key in self.variables:
                             slot_vars.append(self.variables[key])
                     if slot_vars:
-                        self.model.Add(sum(slot_vars) <= 1)
-        logger.debug("Added Class Concurrency constraints")
+                        empty_slot = self.model.NewBoolVar(f"empty_c{class_obj.id}_d{day}_p{period}")
+                        self.model.Add(sum(slot_vars) + empty_slot == 1)
+                        self.empty_slot_vars.append(empty_slot)
+        logger.debug("Added Class Occupancy constraints")
 
         # 3. RESOURCE CONFLICTS (Optimized)
         def add_overlap_constraints(allocations_map, entity_name):
@@ -803,9 +875,11 @@ class TimetableScheduler:
 
     def _add_distribution_objective(self):
         """
-        Soft objective: minimise variance of theory-subject slots across days.
-        Implemented by minimising the maximum daily theory-load minus the minimum.
-        This encourages even spreading of theory subjects across the week.
+        Soft objective:
+        - avoid missing required credit-derived hours,
+        - fill otherwise-free slots with bounded credit-weighted theory extras,
+        - keep morning periods fairly shared across theory subjects,
+        - spread theory load across the week.
         """
         theory_daily_load = []  # one IntVar per day
         for day in range(self.num_days):
@@ -822,11 +896,9 @@ class TimetableScheduler:
                 theory_daily_load.append(load_var)
 
         penalty_terms = []
+        half_day = max(1, self.periods_per_day // 2)
         for sub in self.subjects:
-            try:
-                c = int(sub.credits or 3)
-            except (ValueError, TypeError):
-                c = 3
+            credit = self._credit_value(sub)
             for day in range(self.num_days):
                 for period in range(self.periods_per_day):
                     key = f"s{sub.id}_d{day}_p{period}"
@@ -835,16 +907,49 @@ class TimetableScheduler:
                             # Prefer afternoon for labs: penalize early periods heavily
                             penalty_terms.append(self.variables[key] * (self.periods_per_day - period) * 10)
                         else:
-                            # Prefer morning for high credits: penalize later periods based on credits
-                            # We ALSO add a massive reward (-penalty) for simply scheduling this subject
-                            # to eliminate free slots, prioritizing higher credits.
-                            base_reward = -10000 * c
-                            morning_penalty = c * period
-                            penalty_terms.append(self.variables[key] * (base_reward + morning_penalty))
+                            # Filling extra/free slots is credit-weighted, while
+                            # morning preference is period-based and equal for
+                            # every theory subject.
+                            credit_fill_reward = -100 * credit
+                            equal_morning_penalty = period * 3
+                            penalty_terms.append(self.variables[key] * (credit_fill_reward + equal_morning_penalty))
+
+        morning_fairness_terms = []
+        for class_obj in self.classes:
+            class_theory_subjects = [
+                sub for sub in self.subjects
+                if self._id_str(sub.class_id) == self._id_str(class_obj.id) and not sub.requires_lab
+            ]
+            morning_loads = []
+            for sub in class_theory_subjects:
+                morning_vars = []
+                for day in range(self.num_days):
+                    for period in range(half_day):
+                        key = f"s{sub.id}_d{day}_p{period}"
+                        if key in self.variables:
+                            morning_vars.append(self.variables[key])
+                if morning_vars:
+                    max_possible = len(morning_vars)
+                    morning_load = self.model.NewIntVar(0, max_possible, f"morning_load_s{sub.id}")
+                    self.model.Add(morning_load == sum(morning_vars))
+                    morning_loads.append(morning_load)
+
+            if len(morning_loads) >= 2:
+                max_morning = self.model.NewIntVar(0, self.num_days * half_day, f"max_morning_c{class_obj.id}")
+                min_morning = self.model.NewIntVar(0, self.num_days * half_day, f"min_morning_c{class_obj.id}")
+                self.model.AddMaxEquality(max_morning, morning_loads)
+                self.model.AddMinEquality(min_morning, morning_loads)
+                morning_spread = self.model.NewIntVar(0, self.num_days * half_day, f"morning_spread_c{class_obj.id}")
+                self.model.Add(morning_spread == max_morning - min_morning)
+                morning_fairness_terms.append(morning_spread)
 
         morning_penalty = sum(penalty_terms) if penalty_terms else 0
         if hasattr(self, 'shortage_vars') and self.shortage_vars:
             morning_penalty += sum(v * 100000 for v in self.shortage_vars)
+        if hasattr(self, 'empty_slot_vars') and self.empty_slot_vars:
+            morning_penalty += sum(v * 50000 for v in self.empty_slot_vars)
+        if morning_fairness_terms:
+            morning_penalty += sum(v * 300 for v in morning_fairness_terms)
 
         if len(theory_daily_load) >= 2:
             max_load = self.model.NewIntVar(0, self.periods_per_day * len(self.subjects), "max_load")
@@ -854,12 +959,13 @@ class TimetableScheduler:
             spread = self.model.NewIntVar(0, self.periods_per_day * len(self.subjects), "spread")
             self.model.Add(spread == max_load - min_load)
             
-            # Combine objectives: Prioritize even spread heavily, then morning priority
+            # Combine objectives: first avoid missing hours, then keep distribution
+            # and morning fairness healthy, then use credit-weighted extras.
             self.model.Minimize(spread * 1000 + morning_penalty)
-            logger.debug("Added even distribution and morning-priority objectives")
+            logger.debug("Added credit-fill, even distribution, and fair-morning objectives")
         else:
             self.model.Minimize(morning_penalty)
-            logger.debug("Added morning-priority objective")
+            logger.debug("Added credit-fill and fair-morning objective")
 
     def solve(self) -> Dict[str, Any]:
         logger.info(f"Step 4/5: Solving model (Time Limit: {self.time_limit_seconds}s)...")
