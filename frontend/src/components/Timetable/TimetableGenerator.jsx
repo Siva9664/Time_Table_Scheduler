@@ -93,7 +93,7 @@ export default function TimetableGenerator() {
         academic_year: data.academic_year,
         semester: parseInt(data.semester),
         working_days: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
-        periods_per_day: 7,
+        periods_per_day: 9,
         start_time: '09:00',
         end_time: '16:00',
         period_duration_mins: 60,

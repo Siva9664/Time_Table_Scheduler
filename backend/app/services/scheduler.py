@@ -61,6 +61,7 @@ class TimetableScheduler:
         self.vars_by_faculty = {}  # faculty_id -> day -> list of {'start', 'end', 'var', 'period'}
         self.vars_by_subject = {}  # subject_id -> list of BoolVar
         self.empty_slot_vars = []
+        self.subject_by_id = {}
 
 
     def _wrap(self, doc: dict) -> _Obj:
@@ -117,6 +118,7 @@ class TimetableScheduler:
             self.subjects = [self._wrap(d) for d in self.db["subjects"].find({"class_id": {"$in": loaded_class_ids}})]
         else:
             self.subjects = []
+        self.subject_by_id = {self._id_str(s.id): s for s in self.subjects}
 
         # Faculty
         assigned_faculty_ids = {self._id_str(s.faculty_id) for s in self.subjects if s.faculty_id}
@@ -253,7 +255,9 @@ class TimetableScheduler:
 
     @staticmethod
     def _normalize_match_text(value: Any) -> str:
-        value = str(value or "").strip().lower()
+        value = str(value or "").strip()
+        value = re.sub(r"([a-z])([A-Z])", r"\1 \2", value)
+        value = value.lower()
         return re.sub(r"[^a-z0-9]+", " ", value).strip()
 
     @staticmethod
@@ -379,6 +383,12 @@ class TimetableScheduler:
             prefix = re.split(r"\s*-\s*", part, maxsplit=1)[0].strip()
             if prefix and prefix not in variants:
                 variants.append(prefix)
+
+        normalized_variants = {self._normalize_match_text(value) for value in variants}
+        if any("fcv" in value.split() and "lab" in value.split() for value in normalized_variants):
+            for alias in ("CV Lab", "Computer Vision Lab"):
+                if alias not in variants:
+                    variants.append(alias)
 
         return variants
 
@@ -783,33 +793,44 @@ class TimetableScheduler:
         logger.debug("Added Class Occupancy constraints")
 
         # 3. RESOURCE CONFLICTS (Optimized)
+        def is_allowed_shared_fixed_slot(e1, e2, day):
+            if e1.get('period') != e2.get('period'):
+                return False
+
+            slot1 = (e1.get('subject_id'), day, e1.get('period'))
+            slot2 = (e2.get('subject_id'), day, e2.get('period'))
+            if slot1 not in self.specific_constrained_slots or slot2 not in self.specific_constrained_slots:
+                return False
+
+            sub1 = self.subject_by_id.get(self._id_str(e1.get('subject_id')))
+            sub2 = self.subject_by_id.get(self._id_str(e2.get('subject_id')))
+            if not sub1 or not sub2:
+                return False
+
+            same_subject = (
+                self._normalize_match_text(sub1.name) == self._normalize_match_text(sub2.name)
+                or (
+                    sub1.code
+                    and sub2.code
+                    and self._normalize_match_text(sub1.code) == self._normalize_match_text(sub2.code)
+                )
+            )
+            return same_subject and not sub1.requires_lab and not sub2.requires_lab
+
         def add_overlap_constraints(allocations_map, entity_name):
             for entity_id, day_map in allocations_map.items():
                 for day, entries in day_map.items():
                     if not entries:
                         continue
 
-                    groups = {}
-                    for e in entries:
-                        key = (e['start'], e['end'])
-                        if key not in groups:
-                            groups[key] = []
-                        groups[key].append(e['var'])
-
-                    group_sums = []
-                    for (start, end), vars_list in groups.items():
-                        group_sums.append({'start': start, 'end': end, 'expr': sum(vars_list)})
-
-                    if len(group_sums) == 1:
-                        self.model.Add(group_sums[0]['expr'] <= 1)
-                    else:
-                        for i in range(len(group_sums)):
-                            g1 = group_sums[i]
-                            for j in range(i + 1, len(group_sums)):
-                                g2 = group_sums[j]
-                                if g1['start'] < g2['end'] and g2['start'] < g1['end']:
-                                    self.model.Add(g1['expr'] + g2['expr'] <= 1)
-                            self.model.Add(g1['expr'] <= 1)
+                    for i in range(len(entries)):
+                        e1 = entries[i]
+                        for j in range(i + 1, len(entries)):
+                            e2 = entries[j]
+                            if e1['start'] < e2['end'] and e2['start'] < e1['end']:
+                                if is_allowed_shared_fixed_slot(e1, e2, day):
+                                    continue
+                                self.model.Add(e1['var'] + e2['var'] <= 1)
 
         add_overlap_constraints(self.vars_by_faculty, "Faculty")
         logger.debug("Added Resource Conflict (Faculty) constraints")

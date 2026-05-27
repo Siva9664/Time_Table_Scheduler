@@ -59,17 +59,17 @@ class AIConstraintParser:
         self._warnings = []
         self._unrecognized = []
 
+        rule_c = self._rule_based(text)
         if not self.api_key or not self.model:
-            constraints = self._rule_based(text)
+            constraints = rule_c
         else:
             try:
                 raw = self._chat(self._build_system_prompt(), self._build_user_prompt(text))
                 ai_c = self._extract_constraints(json.loads(raw))
-                rule_c = self._rule_based(text)
-                constraints = self._merge(self._normalize(ai_c), rule_c)
+                constraints = self._merge(self._filter_ai_duplicates(self._normalize(ai_c), rule_c), rule_c)
             except Exception as e:
                 print(f"AI Parse Error: {e}")
-                constraints = self._rule_based(text)
+                constraints = rule_c
 
         return {
             "constraints": constraints,
@@ -168,7 +168,9 @@ Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{
 
     @staticmethod
     def _normalize_text(value: Any) -> str:
-        value = str(value or "").strip().lower()
+        value = str(value or "").strip()
+        value = re.sub(r"([a-z])([A-Z])", r"\1 \2", value)
+        value = value.lower()
         value = re.sub(r"[^a-z0-9]+", " ", value).strip()
         honorifics = {"sir", "madam", "mam", "maam", "dr", "prof", "professor", "mr", "mrs", "ms"}
         return " ".join(t for t in value.split() if t not in honorifics)
@@ -358,6 +360,54 @@ Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{
 
         return sorted(set(p for p in periods if 1 <= p <= 20))
 
+    def _parse_day_period_groups(self, text: str) -> List[Tuple[str, List[int]]]:
+        """
+        Parse compact timetable fragments such as:
+        "Tuesday 4,5 Wednesday 4,5" or "Monday 7,8,9".
+        """
+        if not text:
+            return []
+
+        day_pattern = r"\b(" + "|".join(
+            re.escape(day) for day in self.ALL_DAYS + list(self.WEEKDAY_ALIASES.keys())
+        ) + r")\b"
+        matches = list(re.finditer(day_pattern, text, flags=re.IGNORECASE))
+        groups: List[Tuple[str, List[int]]] = []
+
+        for idx, match in enumerate(matches):
+            day = self._single_day(match.group(1))
+            if not day:
+                continue
+            start = match.end()
+            end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+            segment = text[start:end]
+            periods = self._parse_bare_period_numbers(segment)
+            if periods:
+                groups.append((day, periods))
+
+        return groups
+
+    def _lab_subject_for_line(self, chunk: str, subject: Optional[str], subject_names: List[str]) -> Optional[str]:
+        if not subject or "lab" not in self._normalize_text(chunk).split():
+            return None
+        if "lab" in self._normalize_text(subject).split():
+            return subject
+
+        subject_tokens = set(self._normalize_text(subject).split())
+        chunk_tokens = set(self._normalize_text(chunk).split())
+        lab_names = [
+            name for name in subject_names
+            if "lab" in self._normalize_text(name).split()
+        ]
+        for name in lab_names:
+            name_tokens = set(self._normalize_text(name).split())
+            non_lab_name_tokens = name_tokens - {"lab"}
+            if subject_tokens & non_lab_name_tokens:
+                return name
+            if "fcv" in chunk_tokens and "cv" in non_lab_name_tokens:
+                return name
+        return None
+
     def _parse_count(self, text: str, default: int = 1) -> int:
         lower = text.lower()
         digit = re.search(r"\b(\d+)\b", lower)
@@ -428,7 +478,7 @@ Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{
         if direct:
             return direct
 
-        header_match = re.search(r"\bfor\s+(.+?)\s+class\b", chunk, flags=re.IGNORECASE)
+        header_match = re.search(r"\b(?:for\s+)?(.+?)\s+class\b", chunk, flags=re.IGNORECASE)
         if not header_match:
             return None
 
@@ -446,7 +496,56 @@ Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{
                 return class_name
             if len(header_tokens) == 1 and header_tokens[0] == class_tokens[-1]:
                 return class_name
+            if len(header_tokens) == 1 and header_tokens[0] in class_tokens:
+                return class_name
         return None
+
+    def _format_time_24h(self, raw: Any, default_meridiem: Optional[str] = None) -> Optional[str]:
+        """
+        Normalize user-entered times to HH:MM.
+        If no am/pm is supplied, timetable afternoon hours like 1:15 are
+        inferred as PM because college schedules rarely mean 1 AM.
+        """
+        if raw is None:
+            return None
+
+        text = str(raw).strip().lower().replace(".", ":")
+        match = re.match(r"^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$", text)
+        if not match:
+            return None
+
+        hour = int(match.group(1))
+        minute = int(match.group(2) or 0)
+        meridiem = match.group(3) or default_meridiem
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            return None
+
+        if meridiem == "am":
+            if hour == 12:
+                hour = 0
+        elif meridiem == "pm":
+            if hour < 12:
+                hour += 12
+        elif 1 <= hour <= 5:
+            hour += 12
+
+        return f"{hour:02d}:{minute:02d}"
+
+    def _normalize_time_range(self, start: Any, end: Any) -> Tuple[Optional[str], Optional[str]]:
+        start_text = str(start or "").strip().lower()
+        end_text = str(end or "").strip().lower()
+        end_meridiem_match = re.search(r"\b(am|pm)\b", end_text)
+        default_meridiem = end_meridiem_match.group(1) if end_meridiem_match else None
+
+        start_norm = self._format_time_24h(start_text, default_meridiem)
+        end_norm = self._format_time_24h(end_text)
+        if start_norm and end_norm and start_norm >= end_norm:
+            # "1:15 to 2:45" should be afternoon, not overnight.
+            adjusted_start = self._format_time_24h(start_text, "pm")
+            adjusted_end = self._format_time_24h(end_text, "pm")
+            if adjusted_start and adjusted_end and adjusted_start < adjusted_end:
+                return adjusted_start, adjusted_end
+        return start_norm, end_norm
 
     def _append_specific_slot_constraints(
         self,
@@ -554,6 +653,9 @@ Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{
                 active_class = header_class
                 produced = True
                 produced_by_header = True
+            elif re.fullmatch(r"[A-Za-z0-9\s-]+class(?:\s+slots?)?", chunk.strip(), flags=re.IGNORECASE):
+                produced = True
+                produced_by_header = True
 
             chunk_days = self._parse_day_names(chunk)
             if chunk_days and not subject and not faculty and not self._parse_period_numbers(chunk):
@@ -595,13 +697,15 @@ Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{
                 time_matches = list(re.finditer(r"(\d{1,2}[:.]\d{2}\s*(?:am|pm)?)\s*(?:to|-)\s*(\d{1,2}[:.]\d{2}\s*(?:am|pm)?)", lower))
                 if time_matches:
                     for tm in time_matches:
-                        constraints.append({
-                            "type": "faculty_time_unavailability",
-                            "faculty_name": faculty,
-                            "start_time": tm.group(1),
-                            "end_time": tm.group(2),
-                        })
-                        produced = True
+                        start_time, end_time = self._normalize_time_range(tm.group(1), tm.group(2))
+                        if start_time and end_time:
+                            constraints.append({
+                                "type": "faculty_time_unavailability",
+                                "faculty_name": faculty,
+                                "start_time": start_time,
+                                "end_time": end_time,
+                            })
+                            produced = True
                 else:
                     days = chunk_days
                     if days:
@@ -777,35 +881,71 @@ Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{
             # Compact fixed-slot style:
             # "Mlops monday 4 and 5", "Wednesday 8,9 Mlops", "Friday FCV 3,8,9"
             if subject and not produced_specific:
-                days = chunk_days or ([active_day] if active_day else [])
+                slot_subject = self._lab_subject_for_line(chunk, subject, subject_names) or subject
+                day_period_groups = self._parse_day_period_groups(chunk)
+                if not day_period_groups and active_day:
+                    day_period_groups = [(active_day, [])]
+
                 compact_chunk = chunk
                 if produced_by_header:
                     compact_chunk = re.sub(r"\bfor\s+.+?\s+class\b", "", compact_chunk, flags=re.IGNORECASE)
-                if periods:
-                    terse_periods = periods
+
+                if day_period_groups:
+                    added_any_group = False
+                    for group_day, group_periods in day_period_groups:
+                        terse_periods = group_periods
+                        if not terse_periods:
+                            raw_periods = self._parse_bare_period_numbers_with_duplicates(compact_chunk)
+                            terse_periods = self._repair_duplicate_lab_periods(raw_periods, subject)
+                        if not terse_periods:
+                            continue
+                        if len(subjects) >= 2:
+                            added_specific = self._append_specific_any_slot_constraints(
+                                constraints,
+                                subjects,
+                                terse_periods,
+                                [group_day],
+                                active_class,
+                                hard=True,
+                            )
+                        else:
+                            added_specific = self._append_specific_slot_constraints(
+                                constraints,
+                                slot_subject,
+                                terse_periods,
+                                [group_day],
+                                active_class,
+                                hard=True,
+                            )
+                        added_any_group = added_specific or added_any_group
+                    produced = added_any_group or produced or produced_by_header
                 else:
-                    raw_periods = self._parse_bare_period_numbers_with_duplicates(compact_chunk)
-                    terse_periods = self._repair_duplicate_lab_periods(raw_periods, subject)
-                if days and terse_periods:
-                    if len(subjects) >= 2:
-                        added_specific = self._append_specific_any_slot_constraints(
-                            constraints,
-                            subjects,
-                            terse_periods,
-                            days,
-                            active_class,
-                            hard=True,
-                        )
+                    days = chunk_days or ([active_day] if active_day else [])
+                    if periods:
+                        terse_periods = periods
                     else:
-                        added_specific = self._append_specific_slot_constraints(
-                            constraints,
-                            subject,
-                            terse_periods,
-                            days,
-                            active_class,
-                            hard=True,
-                        )
-                    produced = added_specific or produced or produced_by_header
+                        raw_periods = self._parse_bare_period_numbers_with_duplicates(compact_chunk)
+                        terse_periods = self._repair_duplicate_lab_periods(raw_periods, subject)
+                    if days and terse_periods:
+                        if len(subjects) >= 2:
+                            added_specific = self._append_specific_any_slot_constraints(
+                                constraints,
+                                subjects,
+                                terse_periods,
+                                days,
+                                active_class,
+                                hard=True,
+                            )
+                        else:
+                            added_specific = self._append_specific_slot_constraints(
+                                constraints,
+                                slot_subject,
+                                terse_periods,
+                                days,
+                                active_class,
+                                hard=True,
+                            )
+                        produced = added_specific or produced or produced_by_header
 
             # Track unrecognized
             if not produced and len(chunk.split()) > 2:
@@ -843,14 +983,14 @@ Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{
                 start = c.get("start_time") or c.get("start")
                 end = c.get("end_time") or c.get("end")
                 if name and start and end:
-                    # try to ensure HH:MM format
-                    start = str(start).replace(".", ":").lower()
-                    end = str(end).replace(".", ":").lower()
-                    # simplistic am/pm cleanup
-                    for suffix in [" am", " pm", "am", "pm"]:
-                        start = start.replace(suffix, "")
-                        end = end.replace(suffix, "")
-                    out.append({"type": "faculty_time_unavailability", "faculty_name": str(name), "start_time": start.strip(), "end_time": end.strip()})
+                    start_norm, end_norm = self._normalize_time_range(start, end)
+                    if start_norm and end_norm:
+                        out.append({
+                            "type": "faculty_time_unavailability",
+                            "faculty_name": str(name),
+                            "start_time": start_norm,
+                            "end_time": end_norm,
+                        })
 
             elif t in {"consecutive_periods", "consecutive", "continuous"}:
                 st = c.get("subject_type") or c.get("subject") or "lab"
@@ -1016,3 +1156,32 @@ Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{
                 by_id[ident] = c
 
         return merged
+
+    @staticmethod
+    def _filter_ai_duplicates(ai_constraints: List[Dict], rule_constraints: List[Dict]) -> List[Dict]:
+        """
+        Rule parsing understands compact fixed-slot tables better than the LLM.
+        Drop broad AI duplicates for day/period pairs already covered by a
+        class-specific deterministic fixed slot, otherwise the scheduler reports
+        false "not found" and "preference not met" warnings.
+        """
+        fixed_pairs = {
+            (c.get("day"), c.get("period"))
+            for c in rule_constraints
+            if c.get("type") in {"specific_time_slot", "specific_time_slot_any"}
+            and c.get("class_name")
+            and c.get("day")
+            and c.get("period") is not None
+        }
+        if not fixed_pairs:
+            return ai_constraints
+
+        filtered = []
+        for c in ai_constraints:
+            if (
+                c.get("type") in {"specific_time_slot", "specific_time_slot_any", "preferred_time_slot"}
+                and (c.get("day"), c.get("period")) in fixed_pairs
+            ):
+                continue
+            filtered.append(c)
+        return filtered
