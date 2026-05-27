@@ -188,6 +188,12 @@ def update_subject(id: str, subj: SubjectUpdate, db: Database = Depends(get_tena
     result = db["subjects"].update_one({"_id": _oid(id)}, {"$set": update_data})
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
+    
+    # Propagate updates to cloned mappings referencing this subject
+    propagate_fields = {k: v for k, v in update_data.items() if k not in ["class_id", "faculty_id", "source_subject_id", "created_at", "updated_at"]}
+    if propagate_fields:
+        db["subjects"].update_many({"source_subject_id": id}, {"$set": propagate_fields})
+        
     return _enrich_subject(db["subjects"].find_one({"_id": _oid(id)}), db)
 
 @router.post("/subjects/{id}/map", response_model=SubjectResponse)
@@ -232,6 +238,8 @@ def map_subject_to_class(id: str, mapping: SubjectMapRequest, db: Database = Dep
 
 @router.delete("/subjects/{id}")
 def delete_subject(id: str, db: Database = Depends(get_tenant_db), current_user: dict = Depends(get_admin_user)):
+    # Delete all cloned mappings referencing this subject
+    db["subjects"].delete_many({"source_subject_id": id})
     result = db["subjects"].delete_one({"_id": _oid(id)})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
@@ -327,12 +335,25 @@ def generate_timetable(request: TimetableGenerateRequest, db: Database = Depends
         try:
             # ── Build context from live DB data so AI can match real names ──
             faculty_docs  = list(db["faculty"].find({}, {"name": 1}))
-            subject_docs  = list(db["subjects"].find({}, {"name": 1}))
+            subject_docs  = list(db["subjects"].find({}, {"name": 1, "code": 1, "requires_lab": 1}))
             class_docs    = list(db["classes"].find({}, {"name": 1, "section": 1}))
+
+            subject_names = []
+            seen_subject_names = set()
+            for subject in subject_docs:
+                for value in (subject.get("name"), subject.get("code")):
+                    if value and value not in seen_subject_names:
+                        subject_names.append(value)
+                        seen_subject_names.add(value)
+                    if value and subject.get("requires_lab"):
+                        lab_alias = f"{value} Lab"
+                        if lab_alias not in seen_subject_names:
+                            subject_names.append(lab_alias)
+                            seen_subject_names.add(lab_alias)
 
             context = {
                 "faculty_names": [d["name"] for d in faculty_docs  if d.get("name")],
-                "subject_names": [d["name"] for d in subject_docs  if d.get("name")],
+                "subject_names": subject_names,
                 "class_names":   [
                     f"{d.get('name', '')} {d.get('section', '')}".strip()
                     for d in class_docs if d.get("name")

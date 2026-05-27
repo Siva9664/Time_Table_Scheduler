@@ -258,8 +258,10 @@ class TimetableScheduler:
 
     @staticmethod
     def _is_hard_specific_constraint(constraint: Dict[str, Any]) -> bool:
-        """Specific slots are preferences unless explicitly marked hard/strict."""
-        return bool(constraint.get("hard") or constraint.get("strict") or constraint.get("soft") is False)
+        """Specific slots are hard by default unless explicitly marked soft."""
+        if constraint.get("soft") is True:
+            return False
+        return True
 
     def _effective_hours(self, subject: _Obj) -> int:
         """Return hours/week for a subject: adjusted > explicit > credits mapping."""
@@ -359,6 +361,50 @@ class TimetableScheduler:
             
         return bool(target_tokens) and all(token in candidate_tokens for token in target_tokens)
 
+    def _subject_target_variants(self, target: str) -> List[str]:
+        """
+        Spreadsheet imports often include class suffixes in subject labels, e.g.
+        "NLP LAB-AIML A". Try the raw label and the subject part before the
+        class suffix so it can still match a stored subject named/code "NLP".
+        """
+        raw = str(target or "").strip()
+        if not raw:
+            return []
+
+        variants = [raw]
+        for part in re.split(r"\s*/\s*", raw):
+            part = part.strip()
+            if part and part not in variants:
+                variants.append(part)
+            prefix = re.split(r"\s*-\s*", part, maxsplit=1)[0].strip()
+            if prefix and prefix not in variants:
+                variants.append(prefix)
+
+        return variants
+
+    def _matches_subject_text(self, target: str, candidate: str, subject: _Obj) -> bool:
+        target_norm = self._normalize_match_text(target)
+        candidate_norm = self._normalize_match_text(candidate)
+        if not target_norm or not candidate_norm:
+            return False
+
+        target_tokens = target_norm.split()
+        candidate_tokens = candidate_norm.split()
+        target_is_lab = "lab" in target_tokens
+        candidate_is_lab = bool(subject.requires_lab) or "lab" in candidate_tokens
+
+        if target_is_lab:
+            if not candidate_is_lab:
+                return False
+            target_tokens = [token for token in target_tokens if token != "lab"]
+            candidate_tokens = [token for token in candidate_tokens if token != "lab"]
+            return bool(target_tokens) and all(token in candidate_tokens for token in target_tokens)
+
+        if candidate_is_lab:
+            return False
+
+        return self._matches_text(target, candidate)
+
     def _class_display_name(self, class_obj: _Obj) -> str:
         return f"{class_obj.name or ''} {class_obj.section or ''}".strip()
 
@@ -370,10 +416,27 @@ class TimetableScheduler:
         )
 
     def _matches_subject(self, target: str, subject: _Obj) -> bool:
-        return (
-            self._matches_text(target, subject.name)
-            or self._matches_text(target, subject.code)
-        )
+        for variant in self._subject_target_variants(target):
+            if (
+                self._matches_subject_text(variant, subject.name, subject)
+                or self._matches_subject_text(variant, subject.code, subject)
+            ):
+                return True
+        return False
+
+    def _matches_schedule_subject(self, target: str, slot: Dict[str, Any]) -> bool:
+        subject_name = slot.get("subject")
+        subject_code = slot.get("subject_code")
+        if not subject_name and not subject_code:
+            return False
+
+        subject = _Obj({
+            "_id": slot.get("subject_id") or "schedule-slot",
+            "name": subject_name,
+            "code": subject_code,
+            "requires_lab": bool(slot.get("is_lab")),
+        })
+        return self._matches_subject(target, subject)
 
     def _subjects_for_class_target(self, target: str) -> List[_Obj]:
         class_ids = {self._id_str(cls.id) for cls in self.classes if self._matches_class(target, cls)}
@@ -383,19 +446,75 @@ class TimetableScheduler:
         if target_type == "class":
             return self._subjects_for_class_target(target)
             
-        target_norm = self._normalize_match_text(target)
-        if not target_norm:
+        target_variants = self._subject_target_variants(target)
+        if not target_variants:
             return []
-            
-        # Try exact match first
-        exact_matches = [
-            sub for sub in self.subjects
-            if self._normalize_match_text(sub.name) == target_norm or self._normalize_match_text(sub.code) == target_norm
-        ]
-        if exact_matches:
-            return exact_matches
-            
-        return [sub for sub in self.subjects if self._matches_subject(target, sub)]
+
+        # Try exact match first, preserving lab/theory intent even when codes
+        # are reused for both a theory and a lab subject.
+        for variant in target_variants:
+            target_norm = self._normalize_match_text(variant)
+            if not target_norm:
+                continue
+            target_is_lab = "lab" in target_norm.split()
+            exact_matches = [
+                sub for sub in self.subjects
+                if self._normalize_match_text(sub.name) == target_norm or self._normalize_match_text(sub.code) == target_norm
+            ]
+            if exact_matches and not target_is_lab:
+                exact_matches = [sub for sub in exact_matches if not sub.requires_lab]
+            if exact_matches:
+                return exact_matches
+
+        matches = [sub for sub in self.subjects if self._matches_subject(target, sub)]
+        if matches:
+            return matches
+
+        # Some datasets store only the base theory subject even when the input
+        # refers to a lab label such as "FCV Lab". Use the base subject as a
+        # last resort so exact imported timetables can still be reproduced.
+        target_tokens = self._normalize_match_text(target).split()
+        if "lab" in target_tokens:
+            base_target = " ".join(token for token in target_tokens if token != "lab")
+            fallback_matches = [
+                sub for sub in self.subjects
+                if self._matches_text(base_target, sub.name) or self._matches_text(base_target, sub.code)
+            ]
+            if fallback_matches:
+                message = (
+                    f"specific_time_slot: target '{target}' matched base subject "
+                    f"'{fallback_matches[0].name}' because no lab-specific subject was loaded"
+                )
+                if message not in self.auto_adjustments:
+                    self.auto_adjustments.append(message)
+                logger.info(message)
+                return fallback_matches
+
+        return []
+
+    def _subjects_for_constraint_targets(
+        self,
+        targets: List[str],
+        target_type: str = "subject",
+        class_name: Optional[str] = None,
+    ) -> List[_Obj]:
+        matched_by_id: Dict[str, _Obj] = {}
+        for target in targets:
+            for sub in self._subjects_for_target(str(target), target_type):
+                matched_by_id[self._id_str(sub.id)] = sub
+
+        matched_subjects = list(matched_by_id.values())
+        if class_name:
+            matching_class_ids = {
+                self._id_str(cls.id)
+                for cls in self.classes
+                if self._matches_class(class_name, cls)
+            }
+            matched_subjects = [
+                sub for sub in matched_subjects
+                if self._id_str(sub.class_id) in matching_class_ids
+            ]
+        return matched_subjects
 
     def _constraint_error(self, message: str):
         """Soft-fail: record warning and continue, never block scheduling."""
@@ -578,8 +697,9 @@ class TimetableScheduler:
         specific_preference_slots = set()
         if self.custom_constraints:
             for c in self.custom_constraints:
-                if c.get("type") == "specific_time_slot" and c.get("target_type", "subject") == "subject":
+                if c.get("type") in {"specific_time_slot", "specific_time_slot_any"} and c.get("target_type", "subject") == "subject":
                     target = str(c.get("target", ""))
+                    targets = c.get("targets") or [target]
                     period_num = c.get("period")
                     day_name = c.get("day")
                     if period_num is not None and day_name:
@@ -589,11 +709,8 @@ class TimetableScheduler:
                             continue
                         day_idx = next((i for i, d in enumerate(self.working_days) if d.lower() == day_name.lower()), None)
                         if day_idx is not None:
-                            matched_subjects = self._subjects_for_target(target, "subject")
                             class_name = c.get("class_name")
-                            if class_name:
-                                matching_class_ids = {self._id_str(cls.id) for cls in self.classes if self._matches_class(class_name, cls)}
-                                matched_subjects = [sub for sub in matched_subjects if self._id_str(sub.class_id) in matching_class_ids]
+                            matched_subjects = self._subjects_for_constraint_targets(targets, "subject", class_name)
                             for sub in matched_subjects:
                                 slot = (sub.id, day_idx, p_idx)
                                 specific_constrained_slots.add(slot)
@@ -636,8 +753,9 @@ class TimetableScheduler:
                         specific_slots_count = 0
                         if self.custom_constraints:
                             for c in self.custom_constraints:
-                                if c.get("type") == "specific_time_slot" and c.get("target_type", "subject") == "subject":
-                                    if self._matches_subject(c.get("target", ""), subject) and c.get("day", "").lower() == day_name:
+                                if c.get("type") in {"specific_time_slot", "specific_time_slot_any"} and c.get("target_type", "subject") == "subject":
+                                    targets = c.get("targets") or [c.get("target", "")]
+                                    if any(self._matches_subject(target, subject) for target in targets) and c.get("day", "").lower() == day_name:
                                         class_name = c.get("class_name")
                                         if not class_name:
                                             specific_slots_count += 1
@@ -704,10 +822,10 @@ class TimetableScheduler:
             # Soft PDF/given slots should guide lab placement, while the default
             # lab block rule still keeps labs together on one day.
             has_specific_slots = any(
-                c.get("type") == "specific_time_slot" 
+                c.get("type") in {"specific_time_slot", "specific_time_slot_any"}
                 and c.get("target_type", "subject") == "subject"
                 and self._is_hard_specific_constraint(c)
-                and self._matches_subject(c.get("target", ""), sub)
+                and any(self._matches_subject(target, sub) for target in (c.get("targets") or [c.get("target", "")]))
                 for c in self.custom_constraints
             )
             if has_specific_slots:
@@ -992,6 +1110,44 @@ class TimetableScheduler:
                     else:
                         self._constraint_error(f"specific_time_slot: target '{target}' ({target_type}) not found in loaded data")
 
+            elif c_type == "specific_time_slot_any":
+                targets = [str(target) for target in constraint.get("targets", []) if target]
+                target_type = str(constraint.get("target_type", "subject")).lower()
+                period_num = constraint.get("period")
+                if period_num is not None:
+                    try:
+                        p_idx = int(period_num) - 1
+                    except (TypeError, ValueError):
+                        self._constraint_error(f"specific_time_slot_any: invalid period '{period_num}' for targets '{targets}'")
+                        continue
+
+                    day_name = constraint.get("day")
+                    class_name = constraint.get("class_name")
+                    matched_subjects = self._subjects_for_constraint_targets(targets, target_type, class_name)
+                    slot_vars = []
+                    for sub in matched_subjects:
+                        for day_idx in range(self.num_days):
+                            if day_name and self.working_days[day_idx].lower() != day_name.lower():
+                                continue
+                            if 0 <= p_idx < self.periods_per_day:
+                                key = f"s{sub.id}_d{day_idx}_p{p_idx}"
+                                if key in self.variables:
+                                    slot_vars.append(self.variables[key])
+
+                    if slot_vars and self._is_hard_specific_constraint(constraint):
+                        self.model.Add(sum(slot_vars) >= 1)
+                    elif not slot_vars:
+                        self._constraint_error(
+                            f"specific_time_slot_any unavailable: none of {targets} has a feasible variable "
+                            f"for period {period_num}" + (f" on {day_name}" if day_name else "")
+                        )
+
+                    if matched_subjects:
+                        mode = "hard" if self._is_hard_specific_constraint(constraint) else "preferred"
+                        logger.debug(f"Applied {mode} specific_time_slot_any for {targets} ({target_type}, period={period_num}, day={day_name})")
+                    else:
+                        self._constraint_error(f"specific_time_slot_any: targets {targets} ({target_type}) not found in loaded data")
+
             else:
                 self._constraint_error(f"Unsupported AI constraint type: '{c_type}'")
 
@@ -1266,7 +1422,7 @@ class TimetableScheduler:
                             if target_type == "class":
                                 satisfied = bool(slot.get("subject"))
                             else:
-                                satisfied = self._matches_text(target, slot.get("subject"))
+                                satisfied = self._matches_schedule_subject(target, slot)
                             if satisfied:
                                 break
                         if satisfied:
@@ -1278,6 +1434,45 @@ class TimetableScheduler:
                     label = "hard constraint" if self._is_hard_specific_constraint(constraint) else "preference"
                     errors.append(
                         f"specific_time_slot {label} not met: {target} "
+                        f"period {period}" + (f" on {constraint.get('day')}" if constraint.get("day") else "") +
+                        (f" for {class_name}" if class_name else "") + "."
+                    )
+
+            elif c_type == "specific_time_slot_any":
+                targets = [str(target) for target in constraint.get("targets", []) if target]
+                class_name = str(constraint.get("class_name", ""))
+                day_filter = str(constraint.get("day", "")).lower()
+                try:
+                    period = int(constraint.get("period"))
+                except (TypeError, ValueError):
+                    continue
+
+                matched_any_class = False
+                satisfied = False
+                for class_schedule in schedule.values():
+                    schedule_class_name = str(class_schedule.get("class_name", ""))
+                    if class_name and not self._matches_text(class_name, schedule_class_name):
+                        continue
+                    matched_any_class = True
+
+                    for day_name, slots in class_schedule.get("timetable", {}).items():
+                        if day_filter and day_name.lower() != day_filter:
+                            continue
+                        for slot in slots:
+                            if slot.get("period") != period:
+                                continue
+                            satisfied = any(self._matches_schedule_subject(target, slot) for target in targets)
+                            if satisfied:
+                                break
+                        if satisfied:
+                            break
+                    if satisfied:
+                        break
+
+                if matched_any_class and not satisfied:
+                    label = "hard constraint" if self._is_hard_specific_constraint(constraint) else "preference"
+                    errors.append(
+                        f"specific_time_slot_any {label} not met: one of {', '.join(targets)} "
                         f"period {period}" + (f" on {constraint.get('day')}" if constraint.get("day") else "") +
                         (f" for {class_name}" if class_name else "") + "."
                     )

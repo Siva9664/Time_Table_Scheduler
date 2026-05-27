@@ -57,7 +57,12 @@ export default function TimetableView() {
 
   // --- DOWNLOAD HANDLER ---
   const handleDownload = async () => {
-    if (!selected) return;
+    console.log("handleDownload started!");
+    console.log("Selected timetable data:", selected);
+    if (!selected) {
+      console.log("selected is null or undefined!");
+      return;
+    }
 
     showToast("Generating PDF... Please wait.", "info");
 
@@ -72,7 +77,7 @@ export default function TimetableView() {
     wrapper.style.position = 'absolute';
     wrapper.style.left = '-9999px';
     wrapper.style.top = '0';
-    wrapper.style.width = 'max-content';
+    wrapper.style.width = '1200px';
     wrapper.style.display = 'inline-block';
     wrapper.style.padding = '20px';
     wrapper.style.fontFamily = "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
@@ -105,9 +110,10 @@ export default function TimetableView() {
               const bg = slot.is_lab ? '#eff6ff' : '#f0fdf4';
               const border = slot.is_lab ? '#bfdbfe' : '#bbf7d0';
               const color = slot.is_lab ? '#1e3a8a' : '#14532d';
+              const customMarker = slot.is_custom ? '<span style="float:right;font-size:11px;" title="User Constraint">📌</span>' : '';
               return `<td style="padding:6px;border:1px solid #d1d5db;vertical-align:top;">
                 <div style="background:${bg};border:1px solid ${border};color:${color};border-radius:6px;padding:6px;height:100%;min-height:80px;">
-                  <div style="font-weight:700;font-size:12px;">${slot.subject}</div>
+                  <div style="font-weight:700;font-size:12px;">${customMarker}${slot.subject}</div>
                   <div style="font-size:10px;opacity:0.7;margin-top:2px;">${slot.subject_code || ''}</div>
                   <div style="font-size:11px;margin-top:6px;padding-top:4px;border-top:1px solid rgba(0,0,0,0.08);"><span style="opacity:0.8;">Faculty:</span> ${slot.faculty}</div>
                 </div>
@@ -140,45 +146,71 @@ export default function TimetableView() {
 
       // 2. Build Faculty Pages
       const facData = getFacultySchedule(selected.schedule_data);
-      if (facData) {
-        Object.entries(facData).sort().forEach(([facultyName, schedule]) => {
-          const rows = Object.entries(schedule).map(([day, slots]) => {
-            const cellsHtml = slots.sort((a,b) => a.period - b.period).map(slot => `
-              <div style="display:inline-block;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:8px;min-width:180px;margin-right:8px;margin-bottom:8px;">
-                <div style="font-size:11px;font-family:monospace;color:#9ca3af;margin-bottom:4px;">${slot.time} (P${slot.period})</div>
-                <div style="font-weight:700;font-size:13px;color:#2563eb;">${slot.class_name}</div>
-                <div style="font-size:12px;color:#4b5563;">${slot.subject}</div>
-              </div>
-            `).join('');
-            
-            return `<tr>
-              <td style="padding:10px 14px;border:1px solid #d1d5db;font-weight:600;color:#374151;background:#f9fafb;white-space:nowrap;vertical-align:top;">${day}</td>
-              <td style="padding:10px;border:1px solid #d1d5db;">
-                ${cellsHtml}
-              </td>
-            </tr>`;
+      if (facData && selected.schedule_data) {
+        const firstClassKey = Object.keys(selected.schedule_data)[0];
+        if (firstClassKey) {
+          const masterTimetable = selected.schedule_data[firstClassKey].timetable;
+          const days = Object.keys(masterTimetable);
+          const masterSlotsTemplate = masterTimetable[days[0]];
+
+          const headers = masterSlotsTemplate.map(slot => {
+            const isBreak = slot.slot_type === 'break';
+            const label = isBreak ? (slot.label || 'Break') : `Period ${slot.period}`;
+            return `<th style="padding:8px 12px;background:${isBreak ? '#fff7ed' : '#f3f4f6'};border:1px solid #d1d5db;min-width:${isBreak ? '110px' : '130px'};text-align:center;font-size:11px;">
+              <div style="font-weight:700;text-transform:uppercase;color:${isBreak ? '#9a3412' : '#374151'};">${label}</div>
+              <div style="color:#9ca3af;font-family:monospace;font-size:10px;margin-top:2px;">${slot.time}</div>
+            </th>`;
           }).join('');
 
-          pagesHTML.push(`
-            <div>
-              <div style="margin-bottom:20px;">
-                <h1 style="font-size:22px;font-weight:800;margin-bottom:4px;color:#111827;">${selected.name} <span style="font-size:14px;font-weight:400;color:#6b7280;margin-left:12px;">(Faculty View)</span></h1>
-                <h3 style="font-size:18px;font-weight:700;color:#111827;margin-bottom:4px;">${facultyName}</h3>
+          Object.entries(facData).sort().forEach(([facultyName, schedule]) => {
+            const rows = days.map(day => {
+              const facultyDaySlots = schedule[day] || [];
+              const cells = masterSlotsTemplate.map(slot => {
+                if (slot.slot_type === 'break') {
+                  return `<td style="padding:8px;border:1px solid #d1d5db;text-align:center;background:#fffbeb;color:#92400e;font-size:12px;font-weight:700;text-transform:uppercase;">${slot.label || 'Break'}</td>`;
+                }
+                const assignedSlot = facultyDaySlots.find(s => s.period === slot.period);
+                if (!assignedSlot) {
+                  return `<td style="padding:8px;border:1px solid #d1d5db;text-align:center;color:#d1d5db;font-size:11px;font-style:italic;">Free</td>`;
+                }
+                return `<td style="padding:6px;border:1px solid #d1d5db;vertical-align:top;">
+                  <div style="background:#eff6ff;border:1px solid #bfdbfe;color:#1e3a8a;border-radius:6px;padding:6px;height:100%;min-height:80px;">
+                    <div style="font-weight:700;font-size:12px;">${assignedSlot.class_name}</div>
+                    <div style="font-size:11px;margin-top:6px;padding-top:4px;border-top:1px solid rgba(0,0,0,0.08);"><span style="opacity:0.8;">Subject:</span> ${assignedSlot.subject}</div>
+                    <div style="font-size:10px;opacity:0.7;margin-top:2px;">${assignedSlot.subject_code || ''}</div>
+                  </div>
+                </td>`;
+              }).join('');
+
+              return `<tr>
+                <td style="padding:10px 14px;border:1px solid #d1d5db;font-weight:600;color:#374151;background:#f9fafb;white-space:nowrap;">${day}</td>
+                ${cells}
+              </tr>`;
+            }).join('');
+
+            pagesHTML.push(`
+              <div>
+                <div style="margin-bottom:20px;">
+                  <h1 style="font-size:22px;font-weight:800;margin-bottom:4px;color:#111827;">${selected.name} <span style="font-size:14px;font-weight:400;color:#6b7280;margin-left:12px;">(Faculty View)</span></h1>
+                  <h3 style="font-size:18px;font-weight:700;color:#111827;margin-bottom:4px;">${facultyName}</h3>
+                </div>
+                <table style="border-collapse:collapse;width:100%;">
+                  <thead><tr>
+                    <th style="padding:8px 14px;background:#f3f4f6;border:1px solid #d1d5db;text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;color:#6b7280;">Day</th>
+                    ${headers}
+                  </tr></thead>
+                  <tbody>${rows}</tbody>
+                </table>
               </div>
-              <table style="border-collapse:collapse;width:100%;">
-                <thead><tr>
-                  <th style="padding:8px 14px;background:#f3f4f6;border:1px solid #d1d5db;text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;color:#6b7280;width:90px;">Day</th>
-                  <th style="padding:8px 14px;background:#f3f4f6;border:1px solid #d1d5db;text-align:left;font-size:11px;font-weight:700;text-transform:uppercase;color:#6b7280;">Schedule</th>
-                </tr></thead>
-                <tbody>${rows}</tbody>
-              </table>
-            </div>
-          `);
-        });
+            `);
+          });
+        }
       }
 
       // 3. Render each page sequentially
+      console.log("Total pages to render:", pagesHTML.length);
       for (let i = 0; i < pagesHTML.length; i++) {
+        console.log(`Rendering page ${i + 1}/${pagesHTML.length}...`);
         wrapper.innerHTML = pagesHTML[i];
         
         const canvas = await html2canvas(wrapper, { 
@@ -188,6 +220,7 @@ export default function TimetableView() {
           windowWidth: wrapper.scrollWidth,
           width: wrapper.scrollWidth
         });
+        console.log(`Finished canvas for page ${i + 1}/${pagesHTML.length}. Converting to image...`);
         
         const imgData = canvas.toDataURL('image/jpeg', 0.98);
         const imgWidth = availableWidth;
@@ -195,7 +228,9 @@ export default function TimetableView() {
 
         if (i > 0) pdf.addPage();
         pdf.addImage(imgData, 'JPEG', margin, margin, imgWidth, imgHeight);
+        console.log(`Page ${i + 1}/${pagesHTML.length} successfully added to PDF.`);
       }
+      console.log("Saving PDF...");
 
       pdf.save(`${selected.name.replace(/[^a-z0-9]/gi, '_')} - Full Schedule.pdf`);
       showToast("PDF downloaded successfully!", "success");
@@ -276,7 +311,12 @@ export default function TimetableView() {
                         ) : slot.subject ? (
                           <div style={{ height: '100%', padding: '8px', borderRadius: '6px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', background: slot.is_lab ? '#eff6ff' : '#f0fdf4', border: `1px solid ${slot.is_lab ? '#bfdbfe' : '#bbf7d0'}`, color: slot.is_lab ? '#1e3a8a' : '#14532d' }}>
                             <div>
-                              <div style={{ fontWeight: 700, fontSize: '13px', lineHeight: 1.3 }}>{slot.subject}</div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '4px' }}>
+                                <div style={{ fontWeight: 700, fontSize: '13px', lineHeight: 1.3 }}>{slot.subject}</div>
+                                {slot.is_custom && (
+                                  <span title="User Constraint" style={{ fontSize: '12px', flexShrink: 0 }}>📌</span>
+                                )}
+                              </div>
                               <div style={{ fontSize: '11px', opacity: 0.7, marginTop: '2px' }}>{slot.subject_code}</div>
                             </div>
                             <div style={{ marginTop: '8px', paddingTop: '6px', borderTop: '1px solid rgba(0,0,0,0.07)', fontSize: '11px', fontWeight: 500 }}>

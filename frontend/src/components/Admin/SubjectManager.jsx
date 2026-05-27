@@ -33,7 +33,8 @@ export default function SubjectManager() {
   const loadData = async () => {
     try {
       const subRes = await subjectAPI.getAll().catch(err => { console.error('Subjects fail', err); return { data: [] }; });
-      setSubjects(subRes.data);
+      const coreSubjects = (subRes.data || []).filter(sub => !sub.source_subject_id);
+      setSubjects(coreSubjects);
 
       const deptRes = await departmentAPI.getAll().catch(err => { console.error('Depts fail', err); return { data: [] }; });
       setDepartments(deptRes.data);
