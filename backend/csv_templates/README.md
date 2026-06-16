@@ -9,6 +9,7 @@ cd backend
 source .venv/bin/activate
 python3 scripts/import_csv.py --type departments
 python3 scripts/import_csv.py --type classes
+python3 scripts/import_csv.py --type rooms
 python3 scripts/import_csv.py --type subjects
 python3 scripts/import_csv.py --type faculty
 python3 scripts/import_csv.py --type mappings
@@ -25,6 +26,7 @@ python3 scripts/import_csv.py --type all
 - `departments_template.csv`
 - `batches_template.csv`
 - `classes_template.csv`
+- `rooms_template.csv`
 - `subjects_template.csv`
 - `faculty_template.csv`
 - `mappings_template.csv`
@@ -32,5 +34,6 @@ python3 scripts/import_csv.py --type all
 ## Notes
 
 - `department_codes` in `subjects_template.csv` supports semicolon-separated values for multiple departments.
-- Use `department_code` or `department_id` to relate classes and faculty to departments.
-- `mappings_template.csv` links `subject_code` with `class_name` and `faculty_email`.
+- Use `department_code` or `department_id` to relate classes, rooms, and faculty to departments.
+- `classes_template.csv` can include `room_code` to assign a default room to a class.
+- `mappings_template.csv` links `subject_code` with `class_name` and `faculty_email`; optional `room_code` sets the class default room used by room-aware scheduling.

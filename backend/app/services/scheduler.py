@@ -44,6 +44,7 @@ class TimetableScheduler:
         self.classes = []
         self.subjects = []
         self.faculty = []
+        self.rooms = []
 
         # OR-Tools
         self.model = cp_model.CpModel()
@@ -59,9 +60,13 @@ class TimetableScheduler:
 
         # Optimization Caches
         self.vars_by_faculty = {}  # faculty_id -> day -> list of {'start', 'end', 'var', 'period'}
+        self.vars_by_room = {}  # room_id -> day -> list of {'start', 'end', 'var', 'period'}
         self.vars_by_subject = {}  # subject_id -> list of BoolVar
+        self.room_variables = {}  # Map: "s{subject_id}_d{day}_p{period}_r{room_id}" -> BoolVar
         self.empty_slot_vars = []
         self.subject_by_id = {}
+        self.room_by_id = {}
+        self._candidate_rooms_cache: Dict[str, List[_Obj]] = {}
 
 
     def _wrap(self, doc: dict) -> _Obj:
@@ -112,6 +117,17 @@ class TimetableScheduler:
         self.classes = [self._wrap_class(d) for d in self.db["classes"].find(class_query)]
         loaded_class_ids = [c.id for c in self.classes]
         self.class_map = {self._id_str(c.id): c for c in self.classes}
+
+        room_query = {}
+        if dept_ids_str:
+            room_query = {"$or": [
+                {"department_id": {"$in": dept_ids_str}},
+                {"department_id": None},
+                {"department_id": ""},
+                {"department_id": {"$exists": False}},
+            ]}
+        self.rooms = [self._wrap(d) for d in self.db["rooms"].find(room_query)]
+        self.room_by_id = {self._id_str(r.id): r for r in self.rooms}
 
         # Subjects (linked to loaded classes)
         if loaded_class_ids:
@@ -168,10 +184,109 @@ class TimetableScheduler:
         summary = {
             "departments": len(self.departments), "batches": len(self.batches),
             "classes": len(self.classes), "subjects": len(self.subjects),
-            "faculty": len(self.faculty)
+            "faculty": len(self.faculty), "rooms": len(self.rooms)
         }
         logger.info(f"Data Loaded: {summary}")
         return summary
+
+    def _room_label(self, room: Optional[_Obj]) -> Optional[str]:
+        if not room:
+            return None
+        return room.name or room.code or room.id
+
+    def _room_capacity(self, room: _Obj) -> Optional[int]:
+        try:
+            if room.capacity is None:
+                return None
+            return int(room.capacity)
+        except (TypeError, ValueError):
+            return None
+
+    def _room_type(self, room: _Obj) -> str:
+        return str(room.room_type or "lecture").strip().lower()
+
+    def _room_change_reason(self, subject: _Obj, class_obj: _Obj, assigned_room: Optional[_Obj]) -> Optional[str]:
+        if not assigned_room or not class_obj or not class_obj.room_id:
+            return None
+
+        assigned_room_id = self._id_str(assigned_room.id)
+        default_room_id = self._id_str(class_obj.room_id)
+        if not assigned_room_id or assigned_room_id == default_room_id:
+            return None
+
+        if subject.requires_lab:
+            return "lab_session"
+
+        default_room = self.room_by_id.get(default_room_id)
+        if default_room:
+            default_capacity = self._room_capacity(default_room)
+            try:
+                student_count = int(class_obj.student_count or 0)
+            except (TypeError, ValueError):
+                student_count = 0
+
+            if self._room_type(default_room) == "lab":
+                return "home_room_is_lab"
+            if default_capacity is not None and student_count and default_capacity < student_count:
+                return "home_room_capacity"
+
+        return "home_room_unavailable"
+
+    def _candidate_rooms_for_subject(self, subject: _Obj) -> List[_Obj]:
+        subject_id = self._id_str(subject.id)
+        if subject_id in self._candidate_rooms_cache:
+            return self._candidate_rooms_cache[subject_id]
+
+        if not self.rooms:
+            self._candidate_rooms_cache[subject_id] = []
+            return []
+
+        class_obj = self.class_map.get(self._id_str(subject.class_id))
+        student_count = 0
+        if class_obj:
+            try:
+                student_count = int(class_obj.student_count or 0)
+            except (TypeError, ValueError):
+                student_count = 0
+
+        default_room_id = self._id_str(class_obj.room_id) if class_obj else ""
+        default_room = self.room_by_id.get(default_room_id)
+
+        viable = []
+        for room in self.rooms:
+            room_type = self._room_type(room)
+            capacity = self._room_capacity(room)
+            if capacity is not None and student_count and capacity < student_count:
+                continue
+            if subject.requires_lab:
+                if room_type != "lab":
+                    continue
+            elif room_type == "lab":
+                continue
+            viable.append(room)
+
+        if subject.requires_lab and not viable:
+            viable = [
+                room for room in self.rooms
+                if self._room_capacity(room) is None or not student_count or self._room_capacity(room) >= student_count
+            ]
+            if viable:
+                self._constraint_error(
+                    f"Room warning: no lab room fits '{subject.name}', using any available room as fallback."
+                )
+
+        if default_room and default_room not in viable and not subject.requires_lab:
+            capacity = self._room_capacity(default_room)
+            if self._room_type(default_room) != "lab" and (capacity is None or not student_count or capacity >= student_count):
+                viable.insert(0, default_room)
+
+        if not viable:
+            self._constraint_error(
+                f"Room warning: no suitable room found for '{subject.name}' in "
+                f"{self._class_display_name(class_obj) if class_obj else 'unknown class'}."
+            )
+        self._candidate_rooms_cache[subject_id] = viable
+        return viable
 
     def _parse_time(self, time_str: str) -> int:
         """Converts HH:MM string to minutes from midnight."""
@@ -668,6 +783,7 @@ class TimetableScheduler:
         faculty_map = {self._id_str(f.id): f for f in self.faculty}
 
         self.vars_by_faculty = {self._id_str(f.id): {d: [] for d in range(self.num_days)} for f in self.faculty}
+        self.vars_by_room = {self._id_str(r.id): {d: [] for d in range(self.num_days)} for r in self.rooms}
         self.vars_by_subject = {}
 
         for subject in self.subjects:
@@ -698,7 +814,30 @@ class TimetableScheduler:
 
                     self.vars_by_subject.setdefault(subject.id, []).append(var)
 
-        logger.info(f"Total decision variables created: {len(self.variables)}")
+                    room_vars = []
+                    for room in self._candidate_rooms_for_subject(subject):
+                        room_id = self._id_str(room.id)
+                        room_var_name = f"s{subject.id}_d{day}_p{period}_r{room.id}"
+                        room_var = self.model.NewBoolVar(room_var_name)
+                        self.room_variables[room_var_name] = room_var
+                        room_vars.append(room_var)
+                        self.model.Add(room_var <= var)
+                        if room_id in self.vars_by_room:
+                            self.vars_by_room[room_id][day].append({
+                                'start': start,
+                                'end': end,
+                                'var': room_var,
+                                'period': period,
+                                'subject_id': subject.id,
+                                'room_id': room_id,
+                            })
+                    if room_vars:
+                        self.model.Add(sum(room_vars) == var)
+
+        logger.info(
+            f"Total decision variables created: {len(self.variables)} subject slots, "
+            f"{len(self.room_variables)} room assignments"
+        )
 
     def add_constraints(self):
         logger.info("Step 3/5: Adding constraints to the model...")
@@ -834,6 +973,32 @@ class TimetableScheduler:
 
         add_overlap_constraints(self.vars_by_faculty, "Faculty")
         logger.debug("Added Resource Conflict (Faculty) constraints")
+
+        add_overlap_constraints(self.vars_by_room, "Room")
+        logger.debug("Added Resource Conflict (Rooms) constraints")
+
+        # Keep a lab block in one lab room once the block is placed.
+        for sub in self.subjects:
+            if not sub.requires_lab:
+                continue
+            candidate_rooms = self._candidate_rooms_for_subject(sub)
+            if len(candidate_rooms) <= 1:
+                continue
+            for day in range(self.num_days):
+                room_period_vars = {}
+                for period in range(self.periods_per_day):
+                    for room in candidate_rooms:
+                        key = f"s{sub.id}_d{day}_p{period}_r{room.id}"
+                        if key in self.room_variables:
+                            room_period_vars.setdefault(self._id_str(room.id), []).append((period, self.room_variables[key]))
+
+                room_ids = list(room_period_vars.keys())
+                for i, room_id in enumerate(room_ids):
+                    for other_room_id in room_ids[i + 1:]:
+                        for _, first_var in room_period_vars[room_id]:
+                            for _, second_var in room_period_vars[other_room_id]:
+                                self.model.Add(first_var + second_var <= 1)
+        logger.debug("Added lab room consistency constraints")
 
         # 4. DEFAULT: Labs — all hours on ONE day, and consecutive within that day
         for sub in self.subjects:
@@ -1223,6 +1388,26 @@ class TimetableScheduler:
             if key in self.variables:
                 penalty_terms.append(self.variables[key] * -60000)
 
+        for key, room_var in self.room_variables.items():
+            match = re.match(r"^s(.+)_d(\d+)_p(\d+)_r(.+)$", key)
+            if not match:
+                continue
+            sub_id = match.group(1)
+            room_id = match.group(4)
+            sub = self.subject_by_id.get(self._id_str(sub_id))
+            if not sub:
+                continue
+            class_obj = self.class_map.get(self._id_str(sub.class_id))
+            default_room_id = self._id_str(class_obj.room_id) if class_obj else ""
+            room = self.room_by_id.get(self._id_str(room_id))
+            room_type = self._room_type(room) if room else "lecture"
+            if sub.requires_lab:
+                penalty_terms.append(room_var * (0 if room_type == "lab" else 250000))
+            elif default_room_id:
+                penalty_terms.append(room_var * (-50000 if room_id == default_room_id else 500000))
+            else:
+                penalty_terms.append(room_var * 100)
+
         morning_fairness_terms = []
         for class_obj in self.classes:
             class_theory_subjects = [
@@ -1315,6 +1500,7 @@ class TimetableScheduler:
                 "class_name": f"{class_obj.name} {class_obj.section or ''}",
                 "department": dept_name,
                 "batch_name": batch.name if batch else "Default",
+                "default_room": self._room_label(self.room_by_id.get(self._id_str(class_obj.room_id))),
                 "timetable": {}
             }
 
@@ -1351,11 +1537,26 @@ class TimetableScheduler:
                                 if fac:
                                     faculty_name = fac.name
 
+                            assigned_room = None
+                            for room in self._candidate_rooms_for_subject(sub):
+                                room_key = f"s{sub.id}_d{day_idx}_p{p_idx}_r{room.id}"
+                                if room_key in self.room_variables and solver.Value(self.room_variables[room_key]) == 1:
+                                    assigned_room = room
+                                    break
+
                             is_custom = (sub.id, day_idx, p_idx) in self.specific_constrained_slots
+                            class_default_room_id = self._id_str(class_obj.room_id)
+                            assigned_room_id = self._id_str(assigned_room.id) if assigned_room else None
+                            room_change_reason = self._room_change_reason(sub, class_obj, assigned_room)
                             slot_info.update({
                                 "subject": sub.name,
                                 "subject_code": sub.code,
                                 "faculty": faculty_name,
+                                "room": self._room_label(assigned_room),
+                                "room_id": assigned_room_id,
+                                "room_moved": bool(room_change_reason),
+                                "room_change_reason": room_change_reason,
+                                "room_changed": bool(room_change_reason and room_change_reason != "lab_session"),
                                 "is_lab": sub.requires_lab,
                                 "is_custom": is_custom
                             })

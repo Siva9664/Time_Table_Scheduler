@@ -8,7 +8,7 @@ import { jsPDF } from 'jspdf';
 export default function TimetableView() {
   const [timetables, setTimetables] = useState([]);
   const [selected, setSelected] = useState(null);
-  const [activeTab, setActiveTab] = useState('classes'); // 'classes' or 'faculty'
+  const [activeTab, setActiveTab] = useState('classes');
   const { showToast } = useToast();
 
   // Modal State
@@ -116,6 +116,7 @@ export default function TimetableView() {
                   <div style="font-weight:700;font-size:12px;">${customMarker}${slot.subject}</div>
                   <div style="font-size:10px;opacity:0.7;margin-top:2px;">${slot.subject_code || ''}</div>
                   <div style="font-size:11px;margin-top:6px;padding-top:4px;border-top:1px solid rgba(0,0,0,0.08);"><span style="opacity:0.8;">Faculty:</span> ${slot.faculty}</div>
+                  ${slot.room ? `<div style="font-size:10px;margin-top:3px;opacity:0.8;"><span>Room:</span> ${slot.room}${slot.room_changed ? ' *' : ''}</div>` : ''}
                 </div>
               </td>`;
             }).join('');
@@ -178,6 +179,7 @@ export default function TimetableView() {
                     <div style="font-weight:700;font-size:12px;">${assignedSlot.class_name}</div>
                     <div style="font-size:11px;margin-top:6px;padding-top:4px;border-top:1px solid rgba(0,0,0,0.08);"><span style="opacity:0.8;">Subject:</span> ${assignedSlot.subject}</div>
                     <div style="font-size:10px;opacity:0.7;margin-top:2px;">${assignedSlot.subject_code || ''}</div>
+                    ${assignedSlot.room ? `<div style="font-size:10px;opacity:0.75;margin-top:3px;">Room: ${assignedSlot.room}${assignedSlot.room_changed ? ' *' : ''}</div>` : ''}
                   </div>
                 </td>`;
               }).join('');
@@ -267,6 +269,28 @@ export default function TimetableView() {
     return facultyMap;
   };
 
+  const getRoomSchedule = (scheduleData) => {
+    const roomMap = {};
+    if (!scheduleData) return {};
+
+    Object.values(scheduleData).forEach(classData => {
+      Object.entries(classData.timetable).forEach(([day, periods]) => {
+        periods.forEach(slot => {
+          if (slot.room) {
+            if (!roomMap[slot.room]) roomMap[slot.room] = {};
+            if (!roomMap[slot.room][day]) roomMap[slot.room][day] = [];
+
+            roomMap[slot.room][day].push({
+              ...slot,
+              class_name: classData.class_name
+            });
+          }
+        });
+      });
+    });
+    return roomMap;
+  };
+
 
   // --- RENDERERS ---
 
@@ -281,7 +305,7 @@ export default function TimetableView() {
           <div className="border-b pb-3 mb-4 flex flex-col sm:flex-row justify-between items-start sm:items-end gap-2">
             <div>
               <h3 className="text-xl font-bold text-gray-800">{classSchedule.class_name}</h3>
-              <p className="text-sm text-gray-500">{classSchedule.department} • {classSchedule.batch_name}</p>
+              <p className="text-sm text-gray-500">{classSchedule.department} • {classSchedule.batch_name}{classSchedule.default_room ? ` • ${classSchedule.default_room}` : ''}</p>
             </div>
           </div>
           {/* Scrollable table container */}
@@ -320,7 +344,12 @@ export default function TimetableView() {
                               <div style={{ fontSize: '11px', opacity: 0.7, marginTop: '2px' }}>{slot.subject_code}</div>
                             </div>
                             <div style={{ marginTop: '8px', paddingTop: '6px', borderTop: '1px solid rgba(0,0,0,0.07)', fontSize: '11px', fontWeight: 500 }}>
-                              👤 {slot.faculty}
+                              <div>Faculty: {slot.faculty}</div>
+                              {slot.room && (
+                                <div className={slot.room_changed ? 'text-amber-700 font-semibold' : ''}>
+                                  Room: {slot.room}{slot.room_changed ? ' (changed)' : ''}
+                                </div>
+                              )}
                             </div>
                           </div>
                         ) : (
@@ -343,7 +372,7 @@ export default function TimetableView() {
       {Object.entries(dataMap).sort().map(([name, schedule]) => (
         <div key={name} className="card shadow-sm border border-gray-100">
           <h3 className="text-xl font-bold text-gray-800 mb-4 border-b pb-2">
-            {type === 'faculty' ? '👤' : '🚪'} {name}
+            {type === 'faculty' ? 'Faculty' : 'Room'}: {name}
           </h3>
           <div className="visible-scrollbar" style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '420px', border: '1px solid #e5e7eb', borderRadius: '6px' }}>
             <table style={{ minWidth: '600px', borderCollapse: 'collapse', width: '100%' }}>
@@ -371,7 +400,7 @@ export default function TimetableView() {
                               {slot.subject}
                             </div>
                             <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '4px' }}>
-                              👤 {slot.faculty}
+                              {type === 'faculty' ? `Room: ${slot.room || '-'}` : `Faculty: ${slot.faculty || '-'}`}
                             </div>
                           </div>
                         ))}
@@ -455,7 +484,7 @@ export default function TimetableView() {
               {/* TABS + DOWNLOAD */}
               <div className="flex items-center gap-3">
                 <div className="flex bg-gray-200/50 p-1 rounded-lg">
-                  {['classes', 'faculty'].map((tab) => (
+                  {['classes', 'faculty', 'rooms'].map((tab) => (
                     <button
                       key={tab}
                       onClick={() => setActiveTab(tab)}
@@ -498,6 +527,7 @@ export default function TimetableView() {
             <div className="visible-scrollbar" style={{ overflowY: 'auto', overflowX: 'auto', maxHeight: 'calc(100vh - 260px)', minHeight: '400px', padding: '24px', background: 'rgba(249,250,251,0.3)' }}>
               {activeTab === 'classes' && renderClassView()}
               {activeTab === 'faculty' && renderResourceView(getFacultySchedule(selected.schedule_data), 'faculty')}
+              {activeTab === 'rooms' && renderResourceView(getRoomSchedule(selected.schedule_data), 'rooms')}
             </div>
           </div>
         </div>

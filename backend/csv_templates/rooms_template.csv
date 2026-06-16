@@ -1,0 +1,3 @@
+name,code,room_type,capacity,department_code
+Room 101,R101,lecture,60,CSE
+Computer Lab 1,LAB1,lab,40,CSE

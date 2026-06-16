@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
-import { classAPI, departmentAPI, batchAPI } from '../../services/api';
+import { classAPI, departmentAPI, batchAPI, roomAPI } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
 import { useFormCache } from '../../hooks/useFormCache';
 import ConfirmationModal from '../Layout/ConfirmationModal';
@@ -11,6 +11,7 @@ export default function ClassManager() {
   const [classes, setClasses] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [batches, setBatches] = useState([]);
+  const [rooms, setRooms] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [editData, setEditData] = useState(null);
   const { register, handleSubmit, reset, setValue, watch } = useForm();
@@ -40,6 +41,9 @@ export default function ClassManager() {
 
       const batchRes = await batchAPI.getAll().catch(err => { console.error('Batch fail', err); return { data: [] }; });
       setBatches(batchRes.data);
+
+      const roomRes = await roomAPI.getAll().catch(err => { console.error('Rooms fail', err); return { data: [] }; });
+      setRooms(roomRes.data);
     } catch (error) {
       console.error('Failed to load data', error);
       showToast('Failed to load data', 'error');
@@ -52,6 +56,7 @@ export default function ClassManager() {
     setValue('section', cls.section);
     setValue('department_id', cls.department_id);
     setValue('batch_id', cls.batch_id);
+    setValue('room_id', cls.room_id);
     setValue('semester', cls.semester);
     setValue('student_count', cls.student_count);
     setShowForm(true);
@@ -67,7 +72,8 @@ export default function ClassManager() {
         department_id: data.department_id || null,
         semester: parseInt(data.semester),
         student_count: parseInt(data.student_count),
-        batch_id: data.batch_id || null
+        batch_id: data.batch_id || null,
+        room_id: data.room_id || null
       };
 
       if (editData) {
@@ -107,6 +113,11 @@ export default function ClassManager() {
   const getBatchName = (batchId) => {
     const b = batches.find(b => b.id === batchId);
     return b ? b.name : '-';
+  };
+
+  const getRoomName = (roomId) => {
+    const room = rooms.find(r => r.id === roomId);
+    return room ? `${room.name}${room.code ? ` (${room.code})` : ''}` : '-';
   };
 
   return (
@@ -156,6 +167,17 @@ export default function ClassManager() {
                   {batches.map(b => <option key={b.id} value={b.id}>{b.name} ({b.start_time}-{b.end_time})</option>)}
                 </select>
               </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">Default Room</label>
+              <select {...register('room_id')} className="input">
+                <option value="">No fixed room</option>
+                {rooms.map(room => (
+                  <option key={room.id} value={room.id}>
+                    {room.name}{room.code ? ` (${room.code})` : ''} - {room.room_type || 'lecture'}{room.capacity ? `, ${room.capacity} seats` : ''}
+                  </option>
+                ))}
+              </select>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div><label className="block text-sm font-medium mb-2">Semester</label><input {...register('semester')} type="number" className="input" /></div>
@@ -210,6 +232,7 @@ export default function ClassManager() {
                 <p>Semester: <span className="font-medium text-gray-800">{cls.semester}</span></p>
                 <p>Students: <span className="font-medium text-gray-800">{cls.student_count}</span></p>
                 <p>Batch: <span className="font-medium text-gray-800">{getBatchName(cls.batch_id)}</span></p>
+                <p>Room: <span className="font-medium text-gray-800">{getRoomName(cls.room_id)}</span></p>
               </div>
             </div>
           ))}

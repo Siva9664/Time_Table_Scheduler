@@ -64,22 +64,27 @@ COMMON_ALIASES = {
     'email': ['email', 'email_address', 'email address'],
     'start_time': ['starttime', 'start', 'start_time', 'start time'],
     'end_time': ['endtime', 'end', 'end_time', 'end time'],
-    'period_duration': ['periodduration', 'duration', 'period_duration', 'period duration']
+    'period_duration': ['periodduration', 'duration', 'period_duration', 'period duration'],
+    'room_type': ['roomtype', 'type', 'room_type', 'room type'],
+    'capacity': ['capacity', 'seats', 'strength', 'room_capacity', 'room capacity'],
+    'room_code': ['roomcode', 'room', 'room_id', 'assigned_room', 'room code', 'room_code', 'default_room']
 }
 
 EXPECTED_HEADERS = {
     'departments': ['name', 'code'],
     'batches': ['name', 'start_time', 'end_time', 'period_duration'],
-    'classes': ['name', 'section', 'semester', 'student_count', 'department_code', 'batch_name'],
+    'classes': ['name', 'section', 'semester', 'student_count', 'department_code', 'batch_name', 'room_code'],
+    'rooms': ['name', 'code', 'room_type', 'capacity', 'department_code'],
     'subjects': ['name', 'code', 'hours_per_week', 'requires_lab', 'department_codes', 'batch_name'],
     'faculty': ['name', 'email', 'department_code', 'max_hours_per_week'],
-    'mappings': ['subject_code', 'class_name', 'class_section', 'faculty_email']
+    'mappings': ['subject_code', 'class_name', 'class_section', 'faculty_email', 'room_code']
 }
 
 REQUIRED_HEADERS = {
     'departments': ['name', 'code'],
     'batches': ['name'],
     'classes': ['name'],
+    'rooms': ['name'],
     'subjects': ['name', 'code'],
     'faculty': ['name', 'email'],
     'mappings': ['subject_code']
@@ -184,9 +189,9 @@ def _read_csv_rows(path: str) -> Tuple[List[str], List[dict]]:
 @router.post('/upload')
 async def upload_csv(type: str = Form(...), file: UploadFile = File(...), db=Depends(get_db)):
     """Upload a CSV and import data. Form param `type` selects which importer to run.
-    Supported types: departments, batches, classes, subjects, faculty, mappings
+    Supported types: departments, batches, classes, rooms, subjects, faculty, mappings
     """
-    allowed = {'departments','batches','classes','subjects','faculty','mappings'}
+    allowed = {'departments','batches','classes','rooms','subjects','faculty','mappings'}
     if type not in allowed:
         raise HTTPException(status_code=400, detail=f"Unsupported import type: {type}")
 
@@ -240,6 +245,10 @@ async def upload_csv(type: str = Form(...), file: UploadFile = File(...), db=Dep
             for row in rows:
                 dept = db['departments'].find_one({'code': row.get('department_code')}) or db['departments'].find_one({'name': row.get('department_code')})
                 batch = db['batches'].find_one({'name': row.get('batch_name')})
+                room = (
+                    db['rooms'].find_one({'code': row.get('room_code')})
+                    or db['rooms'].find_one({'name': row.get('room_code')})
+                )
                 docs.append({
                     'name': row.get('name') or '',
                     'section': row.get('section') or '',
@@ -247,9 +256,29 @@ async def upload_csv(type: str = Form(...), file: UploadFile = File(...), db=Dep
                     'student_count': int(row.get('student_count') or 0),
                     'department_id': str(dept['_id']) if dept else None,
                     'batch_id': str(batch['_id']) if batch else None,
+                    'room_id': str(room['_id']) if room else None,
                 })
             if docs:
                 res = db['classes'].insert_many(docs)
+                count = len(res.inserted_ids)
+
+        elif type == 'rooms':
+            docs = []
+            for row in rows:
+                dept = db['departments'].find_one({'code': row.get('department_code')}) or db['departments'].find_one({'name': row.get('department_code')})
+                room_type = (row.get('room_type') or 'lecture').strip().lower()
+                if room_type not in ('lecture', 'lab', 'seminar'):
+                    room_type = 'lecture'
+                docs.append({
+                    'name': row.get('name') or '',
+                    'code': row.get('code') or '',
+                    'room_type': room_type,
+                    'capacity': int(row.get('capacity') or 0),
+                    'department_id': str(dept['_id']) if dept else None,
+                    'created_at': datetime.utcnow(),
+                })
+            if docs:
+                res = db['rooms'].insert_many(docs)
                 count = len(res.inserted_ids)
 
         elif type == 'subjects':
@@ -300,9 +329,18 @@ async def upload_csv(type: str = Form(...), file: UploadFile = File(...), db=Dep
                 )
                 cls = db['classes'].find_one({'name': row.get('class_name'), 'section': row.get('class_section')})
                 fac = db['faculty'].find_one({'email': row.get('faculty_email')})
+                room = (
+                    db['rooms'].find_one({'code': row.get('room_code')})
+                    or db['rooms'].find_one({'name': row.get('room_code')})
+                ) if row.get('room_code') else None
                 if subj and (cls or fac):
                     class_id = str(cls['_id']) if cls else subj.get('class_id')
                     faculty_id = str(fac['_id']) if fac else subj.get('faculty_id')
+                    if cls and room:
+                        db['classes'].update_one(
+                            {'_id': cls['_id']},
+                            {'$set': {'room_id': str(room['_id']), 'updated_at': datetime.utcnow()}}
+                        )
                     source_id = subj.get('source_subject_id') or str(subj['_id'])
                     existing = db['subjects'].find_one({
                         'class_id': class_id,

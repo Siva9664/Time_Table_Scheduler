@@ -51,6 +51,7 @@ class ClassBase(BaseModel):
     student_count: Optional[int] = None
     department_id: Optional[str] = None
     batch_id: Optional[str] = None
+    room_id: Optional[str] = None
 
 class ClassCreate(ClassBase):
     pass
@@ -62,12 +63,37 @@ class ClassUpdate(BaseModel):
     student_count: Optional[int] = None
     department_id: Optional[str] = None
     batch_id: Optional[str] = None
+    room_id: Optional[str] = None
 
 class ClassResponse(ClassBase):
     id: str
     created_at: datetime
     department: Optional[DepartmentResponse] = None
     batch: Optional[BatchResponse] = None
+    class Config:
+        from_attributes = True
+
+class RoomBase(BaseModel):
+    name: str
+    code: Optional[str] = None
+    capacity: Optional[int] = None
+    room_type: str = "lecture"
+    department_id: Optional[str] = None
+
+class RoomCreate(RoomBase):
+    pass
+
+class RoomUpdate(BaseModel):
+    name: Optional[str] = None
+    code: Optional[str] = None
+    capacity: Optional[int] = None
+    room_type: Optional[str] = None
+    department_id: Optional[str] = None
+
+class RoomResponse(RoomBase):
+    id: str
+    created_at: datetime
+    department: Optional[DepartmentResponse] = None
     class Config:
         from_attributes = True
 
@@ -90,6 +116,7 @@ class SubjectCreate(SubjectBase):
 class SubjectMapRequest(BaseModel):
     class_id: str
     faculty_id: str
+    room_id: Optional[str] = None
 
 class SubjectUpdate(BaseModel):
     name: Optional[str] = None

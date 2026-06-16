@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { subjectAPI, facultyAPI, classAPI, departmentAPI, batchAPI } from '../../services/api';
+import { subjectAPI, facultyAPI, classAPI, departmentAPI, batchAPI, roomAPI } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
 import { Edit, Trash2 } from 'lucide-react';
 import ConfirmationModal from '../Layout/ConfirmationModal';
@@ -13,6 +13,7 @@ const FacultyMapping = () => {
     const [faculties, setFaculties] = useState([]);
     const [departments, setDepartments] = useState([]);
     const [batches, setBatches] = useState([]);
+    const [rooms, setRooms] = useState([]);
 
     // Form Selection State
     const [selectedBatchId, setSelectedBatchId] = useState('');
@@ -20,6 +21,7 @@ const FacultyMapping = () => {
     const [selectedClassId, setSelectedClassId] = useState('');
     const [selectedSubjectId, setSelectedSubjectId] = useState('');
     const [selectedFacultyId, setSelectedFacultyId] = useState('');
+    const [selectedRoomId, setSelectedRoomId] = useState('');
 
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -44,6 +46,7 @@ const FacultyMapping = () => {
             if (cached.selectedClassId) setSelectedClassId(cached.selectedClassId);
             if (cached.selectedSubjectId) setSelectedSubjectId(cached.selectedSubjectId);
             if (cached.selectedFacultyId) setSelectedFacultyId(cached.selectedFacultyId);
+            if (cached.selectedRoomId) setSelectedRoomId(cached.selectedRoomId);
         }
     }, []);
 
@@ -54,10 +57,16 @@ const FacultyMapping = () => {
             selectedDeptId,
             selectedClassId,
             selectedSubjectId,
-            selectedFacultyId
+            selectedFacultyId,
+            selectedRoomId
         };
         localStorage.setItem('facultyMappingCache', JSON.stringify(selectionsToCache));
-    }, [selectedBatchId, selectedDeptId, selectedClassId, selectedSubjectId, selectedFacultyId]);
+    }, [selectedBatchId, selectedDeptId, selectedClassId, selectedSubjectId, selectedFacultyId, selectedRoomId]);
+
+    useEffect(() => {
+        const cls = classes.find(c => c.id === selectedClassId);
+        setSelectedRoomId(cls?.room_id || '');
+    }, [selectedClassId, classes]);
 
     const hydrateCachedData = () => {
         try {
@@ -71,6 +80,7 @@ const FacultyMapping = () => {
             setFaculties(parsed.faculties || []);
             setDepartments(parsed.departments || []);
             setBatches(parsed.batches || []);
+            setRooms(parsed.rooms || []);
             setLoading(false);
             return true;
         } catch (err) {
@@ -97,12 +107,13 @@ const FacultyMapping = () => {
             } else {
                 setRefreshing(true);
             }
-            const [subRes, classRes, facRes, deptRes, batchRes] = await Promise.all([
+            const [subRes, classRes, facRes, deptRes, batchRes, roomRes] = await Promise.all([
                 subjectAPI.getAll(),
                 classAPI.getAll(),
                 facultyAPI.getAll(),
                 departmentAPI.getAll(),
-                batchAPI.getAll()
+                batchAPI.getAll(),
+                roomAPI.getAll()
             ]);
             const nextData = {
                 subjects: subRes.data || [],
@@ -110,6 +121,7 @@ const FacultyMapping = () => {
                 faculties: facRes.data || [],
                 departments: deptRes.data || [],
                 batches: batchRes.data || [],
+                rooms: roomRes.data || [],
             };
 
             setSubjects(nextData.subjects);
@@ -117,6 +129,7 @@ const FacultyMapping = () => {
             setFaculties(nextData.faculties);
             setDepartments(nextData.departments);
             setBatches(nextData.batches);
+            setRooms(nextData.rooms);
             cacheData(nextData);
         } catch (err) {
             console.error(err);
@@ -151,20 +164,25 @@ const FacultyMapping = () => {
         try {
             const response = await subjectAPI.map(selectedSubjectId, {
                 class_id: selectedClassId,
-                faculty_id: selectedFacultyId
+                faculty_id: selectedFacultyId,
+                room_id: selectedRoomId || null
             });
 
             const mappedSubject = response.data;
+            const nextClasses = classes.map(c => (
+                c.id === selectedClassId ? { ...c, room_id: selectedRoomId || null } : c
+            ));
             const nextSubjects = subjects.some(s => s.id === mappedSubject.id)
                 ? subjects.map(s => s.id === mappedSubject.id ? mappedSubject : s)
                 : [...subjects, mappedSubject];
+            setClasses(nextClasses);
             setSubjects(prev => {
                 const exists = prev.some(s => s.id === mappedSubject.id);
                 return exists
                     ? prev.map(s => s.id === mappedSubject.id ? mappedSubject : s)
                     : [...prev, mappedSubject];
             });
-            cacheData({ subjects: nextSubjects, classes, faculties, departments, batches });
+            cacheData({ subjects: nextSubjects, classes: nextClasses, faculties, departments, batches, rooms });
             loadData({ blocking: false });
 
             // Reset form partly (keep faculty selected)
@@ -186,6 +204,7 @@ const FacultyMapping = () => {
             setSelectedBatchId(cls.batch_id || '');
             setSelectedDeptId(cls.department_id || '');
             setSelectedClassId(cls.id);
+            setSelectedRoomId(cls.room_id || '');
         }
         setSelectedSubjectId(sub.id);
         setSelectedFacultyId(sub.faculty_id || '');
@@ -211,7 +230,7 @@ const FacultyMapping = () => {
                 s.id === subjectToUnassign ? { ...s, faculty_id: null } : s
             );
             setSubjects(nextSubjects);
-            cacheData({ subjects: nextSubjects, classes, faculties, departments, batches });
+            cacheData({ subjects: nextSubjects, classes, faculties, departments, batches, rooms });
             showToast('Faculty unassigned!', 'success');
         } catch (error) {
             showToast('Failed to unassign faculty.', 'error');
@@ -233,6 +252,21 @@ const FacultyMapping = () => {
         const cls = classes.find(c => c.id === classId);
         return cls ? `${cls.name} ${cls.section}` : 'Unassigned';
     };
+
+    const getClassRoomName = (classId) => {
+        const cls = classes.find(c => c.id === classId);
+        const room = rooms.find(r => r.id === cls?.room_id);
+        return room ? `${room.name}${room.code ? ` (${room.code})` : ''}` : 'No fixed room';
+    };
+
+    const availableRooms = rooms.filter(room => {
+        if (!selectedClassId) return true;
+        const cls = classes.find(c => c.id === selectedClassId);
+        if (!cls) return true;
+        const roomDeptOk = !room.department_id || room.department_id === cls.department_id;
+        const capacityOk = !room.capacity || !cls.student_count || Number(room.capacity) >= Number(cls.student_count);
+        return roomDeptOk && capacityOk;
+    });
 
     // --- Filtering Logic for Dropdowns ---
 
@@ -304,17 +338,19 @@ const FacultyMapping = () => {
         const deptName = getSubjectDepartmentNames(sub).toLowerCase();
         const facName = sub.faculty_id ? getFacultyName(sub.faculty_id).toLowerCase() : '';
         const clsName = sub.class_id ? getClassName(sub.class_id).toLowerCase() : '';
+        const roomName = sub.class_id ? getClassRoomName(sub.class_id).toLowerCase() : '';
 
         return (
             sub.name.toLowerCase().includes(term) ||
             sub.code.toLowerCase().includes(term) ||
             deptName.includes(term) ||
             facName.includes(term) ||
-            clsName.includes(term)
+            clsName.includes(term) ||
+            roomName.includes(term)
         );
     });
 
-    const hasAnyData = subjects.length || classes.length || faculties.length || departments.length || batches.length;
+    const hasAnyData = subjects.length || classes.length || faculties.length || departments.length || batches.length || rooms.length;
     const controlsDisabled = loading && !hasAnyData;
 
     return (
@@ -393,7 +429,7 @@ const FacultyMapping = () => {
                         >
                             <option value="">Select Class</option>
                             {availableClasses.map(c => (
-                                <option key={c.id} value={c.id}>{c.name} {c.section}</option>
+                                <option key={c.id} value={c.id}>{c.name} {c.section} - {getClassRoomName(c.id)}</option>
                             ))}
                         </select>
                     </div>
@@ -434,6 +470,23 @@ const FacultyMapping = () => {
                         </select>
                     </div>
 
+                    <div className="flex-1 min-w-[180px]">
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Room</label>
+                        <select
+                            className="w-full px-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 bg-slate-50"
+                            value={selectedRoomId}
+                            disabled={controlsDisabled || !selectedClassId}
+                            onChange={(e) => setSelectedRoomId(e.target.value)}
+                        >
+                            <option value="">No fixed room</option>
+                            {availableRooms.map(room => (
+                                <option key={room.id} value={room.id}>
+                                    {room.name}{room.code ? ` (${room.code})` : ''} - {room.room_type || 'lecture'}{room.capacity ? `, ${room.capacity} seats` : ''}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
                     {/* MAP Button */}
                     <div className="w-full sm:w-auto">
                         <button
@@ -459,7 +512,7 @@ const FacultyMapping = () => {
                 
                 {/* CSV Format Helper Hint */}
                 <div className="mt-3 text-xs text-slate-400 text-right">
-                    CSV format: <code className="bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100">subject_code, class_name, class_section, faculty_email</code>
+                    CSV format: <code className="bg-slate-50 px-1.5 py-0.5 rounded border border-slate-100">subject_code, class_name, class_section, faculty_email, room_code</code>
                 </div>
             </div>
 
@@ -492,6 +545,7 @@ const FacultyMapping = () => {
                                 <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Department</th>
                                 <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Class</th>
                                 <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Subject</th>
+                                <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Room</th>
                                 <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Type</th>
                                 <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Assigned Faculty</th>
                                 <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase tracking-wider">Actions</th>
@@ -509,6 +563,9 @@ const FacultyMapping = () => {
                                     <td className="px-6 py-4">
                                         <div className="font-semibold text-slate-800">{sub.name}</div>
                                         <div className="text-xs text-slate-400">{sub.code}</div>
+                                    </td>
+                                    <td className="px-6 py-4 text-sm text-slate-600">
+                                        {getClassRoomName(sub.class_id)}
                                     </td>
                                     <td className="px-6 py-4">
                                         <span className={`px-3 py-1 text-xs font-bold rounded-full ${sub.requires_lab
@@ -550,7 +607,7 @@ const FacultyMapping = () => {
                             ))}
                             {filteredOverview.length === 0 && (
                                 <tr>
-                                    <td colSpan="6" className="px-6 py-8 text-center text-gray-500">
+                                    <td colSpan="7" className="px-6 py-8 text-center text-gray-500">
                                         No mappings found.
                                     </td>
                                 </tr>

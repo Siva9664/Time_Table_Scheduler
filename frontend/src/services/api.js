@@ -78,6 +78,13 @@ export const classAPI = {
   delete: (id) => withCacheClear(api.delete(`/classes/${id}`))
 };
 
+export const roomAPI = {
+  getAll: () => getCached('/rooms'),
+  create: (data) => withCacheClear(api.post('/rooms', data)),
+  update: (id, data) => withCacheClear(api.put(`/rooms/${id}`, data)),
+  delete: (id) => withCacheClear(api.delete(`/rooms/${id}`))
+};
+
 export const subjectAPI = {
   getAll: () => getCached('/subjects'),
   create: (data) => withCacheClear(api.post('/subjects', data)),

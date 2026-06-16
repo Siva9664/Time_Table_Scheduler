@@ -22,6 +22,7 @@ const Icons = {
     Departments: Building2,
     Batches: Layers,
     Classes: GraduationCap,
+    Rooms: DoorOpen,
     Subjects: BookOpen,
     Faculty: Users,
     Mapping: GitMerge,
@@ -86,6 +87,7 @@ export default function Sidebar() {
                         <NavItem to="/departments" label="Departments" icon={Icons.Departments} />
                         <NavItem to="/batches" label="Batches" icon={Icons.Batches} />
                         <NavItem to="/classes" label="Classes" icon={Icons.Classes} />
+                        <NavItem to="/rooms" label="Rooms" icon={Icons.Rooms} />
                         <NavItem to="/subjects" label="Subjects" icon={Icons.Subjects} />
                         <NavItem to="/faculty" label="Faculty" icon={Icons.Faculty} />
                         <NavItem to="/mapping" label="Mapping" icon={Icons.Mapping} />

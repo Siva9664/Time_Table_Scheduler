@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, useLocation, Outlet } from 'rea
 const Dashboard = React.lazy(() => import('./components/Admin/Dashboard'));
 const DepartmentManager = React.lazy(() => import('./components/Admin/DepartmentManager'));
 const ClassManager = React.lazy(() => import('./components/Admin/ClassManager'));
+const RoomManager = React.lazy(() => import('./components/Admin/RoomManager'));
 const SubjectManager = React.lazy(() => import('./components/Admin/SubjectManager'));
 const FacultyManager = React.lazy(() => import('./components/Admin/FacultyManager'));
 const BatchManager = React.lazy(() => import('./components/Admin/BatchManager'));
@@ -46,6 +47,7 @@ function App() {
             <Route path="departments" element={<DepartmentManager />} />
             <Route path="batches" element={<BatchManager />} />
             <Route path="classes" element={<ClassManager />} />
+            <Route path="rooms" element={<RoomManager />} />
             <Route path="subjects" element={<SubjectManager />} />
             <Route path="faculty" element={<FacultyManager />} />
             <Route path="mapping" element={<FacultyMapping />} />

@@ -6,7 +6,7 @@ from datetime import datetime
 from ...database.database import get_db
 from ...models.timetable import (
     department_helper, batch_helper, class_helper,
-    subject_helper, faculty_helper, timetable_helper
+    subject_helper, faculty_helper, timetable_helper, room_helper
 )
 from ...schemas.timetable import *
 from ...core.security import get_current_user, get_admin_user, get_tenant_db
@@ -93,6 +93,55 @@ def _enrich_class(doc: dict, db: Database) -> dict:
     return class_helper(doc,
                         department=department_helper(dept) if dept else None,
                         batch=batch_helper(batch) if batch else None)
+
+# ── Rooms ─────────────────────────────────────────────────────────────────────
+
+def _normalize_room_payload(payload: dict) -> dict:
+    if "room_type" in payload and payload["room_type"]:
+        room_type = str(payload["room_type"]).strip().lower()
+        if room_type not in {"lecture", "lab", "seminar"}:
+            raise HTTPException(status_code=400, detail="room_type must be lecture, lab, or seminar")
+        payload["room_type"] = room_type
+    if "capacity" in payload and payload["capacity"] is not None:
+        capacity = int(payload["capacity"])
+        if capacity < 0:
+            raise HTTPException(status_code=400, detail="capacity must be 0 or more")
+        payload["capacity"] = capacity
+    return payload
+
+def _enrich_room(doc: dict, db: Database) -> dict:
+    dept = db["departments"].find_one({"_id": _oid(doc["department_id"])}) if doc.get("department_id") else None
+    return room_helper(doc, department=department_helper(dept) if dept else None)
+
+@router.post("/rooms", response_model=RoomResponse)
+def create_room(room: RoomCreate, db: Database = Depends(get_tenant_db), current_user: dict = Depends(get_admin_user)):
+    doc = _normalize_room_payload({**room.dict(), "created_at": datetime.utcnow()})
+    result = db["rooms"].insert_one(doc)
+    return _enrich_room(db["rooms"].find_one({"_id": result.inserted_id}), db)
+
+@router.get("/rooms", response_model=List[RoomResponse])
+def list_rooms(department_id: Optional[str] = None, db: Database = Depends(get_tenant_db), current_user: dict = Depends(get_current_user)):
+    query = {"department_id": department_id} if department_id else {}
+    return [_enrich_room(d, db) for d in db["rooms"].find(query)]
+
+@router.put("/rooms/{id}", response_model=RoomResponse)
+def update_room(id: str, room: RoomUpdate, db: Database = Depends(get_tenant_db), current_user: dict = Depends(get_admin_user)):
+    update_data = _normalize_room_payload({k: v for k, v in room.dict(exclude_unset=True).items()})
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    result = db["rooms"].update_one({"_id": _oid(id)}, {"$set": update_data})
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Not found")
+    return _enrich_room(db["rooms"].find_one({"_id": _oid(id)}), db)
+
+@router.delete("/rooms/{id}")
+def delete_room(id: str, db: Database = Depends(get_tenant_db), current_user: dict = Depends(get_admin_user)):
+    if db["classes"].find_one({"room_id": id}):
+        raise HTTPException(status_code=400, detail="Cannot delete Room: It is assigned to one or more classes.")
+    result = db["rooms"].delete_one({"_id": _oid(id)})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"message": "Deleted"}
 
 @router.post("/classes", response_model=ClassResponse)
 def create_class(cls: ClassCreate, db: Database = Depends(get_tenant_db), current_user: dict = Depends(get_admin_user)):
@@ -209,6 +258,17 @@ def map_subject_to_class(id: str, mapping: SubjectMapRequest, db: Database = Dep
     fac = db["faculty"].find_one({"_id": _oid(mapping.faculty_id)})
     if not fac:
         raise HTTPException(status_code=404, detail="Faculty not found")
+
+    provided_fields = getattr(mapping, "model_fields_set", getattr(mapping, "__fields_set__", set()))
+    if "room_id" in provided_fields:
+        if mapping.room_id:
+            room = db["rooms"].find_one({"_id": _oid(mapping.room_id)})
+            if not room:
+                raise HTTPException(status_code=404, detail="Room not found")
+        db["classes"].update_one(
+            {"_id": cls["_id"]},
+            {"$set": {"room_id": mapping.room_id, "updated_at": datetime.utcnow()}},
+        )
 
     source_id = _subject_source_id(subject)
     existing = db["subjects"].find_one(_subject_mapping_query(source_id, subject, mapping.class_id))

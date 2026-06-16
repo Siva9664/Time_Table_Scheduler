@@ -82,6 +82,16 @@ def find_batch_id(db, name: str) -> Optional[str]:
     return str(batch['_id']) if batch else None
 
 
+def find_room_id(db, code_or_name: str) -> Optional[str]:
+    if not code_or_name:
+        return None
+    room = db['rooms'].find_one({'code': code_or_name})
+    if room:
+        return str(room['_id'])
+    room = db['rooms'].find_one({'name': code_or_name})
+    return str(room['_id']) if room else None
+
+
 def find_class_id(db, name: str, section: Optional[str] = None) -> Optional[str]:
     if not name:
         return None
@@ -140,6 +150,7 @@ def import_classes(db, file_path: str):
     for row in rows:
         department_id = find_department_id(db, row.get('department_code') or row.get('department_id'))
         batch_id = find_batch_id(db, row.get('batch_name') or row.get('batch_id'))
+        room_id = find_room_id(db, row.get('room_code') or row.get('room_id') or row.get('room'))
         docs.append({
             'name': row.get('name') or '',
             'section': row.get('section') or '',
@@ -147,9 +158,29 @@ def import_classes(db, file_path: str):
             'student_count': safe_int(row.get('student_count'), 0),
             'department_id': department_id,
             'batch_id': batch_id,
+            'room_id': room_id,
             'created_at': __import__('datetime').datetime.utcnow()
         })
     bulk_insert(db, 'classes', docs)
+
+
+def import_rooms(db, file_path: str):
+    rows = load_csv_file(file_path)
+    docs = []
+    for row in rows:
+        department_id = find_department_id(db, row.get('department_code') or row.get('department_id'))
+        room_type = (row.get('room_type') or 'lecture').strip().lower()
+        if room_type not in {'lecture', 'lab', 'seminar'}:
+            room_type = 'lecture'
+        docs.append({
+            'name': row.get('name') or '',
+            'code': row.get('code') or '',
+            'room_type': room_type,
+            'capacity': safe_int(row.get('capacity'), 0),
+            'department_id': department_id,
+            'created_at': __import__('datetime').datetime.utcnow()
+        })
+    bulk_insert(db, 'rooms', docs)
 
 
 def import_subjects(db, file_path: str):
@@ -203,9 +234,11 @@ def apply_mappings(db, file_path: str):
         class_name = row.get('class_name') or ''
         class_section = row.get('class_section') or ''
         faculty_email = row.get('faculty_email') or ''
+        room_code = row.get('room_code') or row.get('room') or row.get('default_room') or ''
         subject_id = find_subject_id(db, subject_code)
         class_id = find_class_id(db, class_name, class_section)
         faculty_id = find_faculty_id(db, faculty_email)
+        room_id = find_room_id(db, room_code)
         updates = {}
         if class_id:
             updates['class_id'] = class_id
@@ -214,6 +247,12 @@ def apply_mappings(db, file_path: str):
         if updates and subject_id:
             db['subjects'].update_one({'_id': __import__('bson').ObjectId(subject_id)}, {'$set': updates})
             print(f"Updated subject {subject_code}: {updates}")
+            if class_id and room_id:
+                db['classes'].update_one(
+                    {'_id': __import__('bson').ObjectId(class_id)},
+                    {'$set': {'room_id': room_id, 'updated_at': __import__('datetime').datetime.utcnow()}}
+                )
+                print(f"Updated class {class_name} {class_section}: room_id={room_id}")
         else:
             print(f"Skipping mapping row because subject or target ids were not found: {row}")
 
@@ -222,6 +261,7 @@ def import_all(db, template_dir: str):
     tasks = [
         ('departments', 'departments_template.csv', import_departments),
         ('batches', 'batches_template.csv', import_batches),
+        ('rooms', 'rooms_template.csv', import_rooms),
         ('classes', 'classes_template.csv', import_classes),
         ('subjects', 'subjects_template.csv', import_subjects),
         ('faculty', 'faculty_template.csv', import_faculty),
@@ -238,7 +278,7 @@ def import_all(db, template_dir: str):
 
 def main():
     parser = argparse.ArgumentParser(description='Bulk import CSV data into the timetable MongoDB.')
-    parser.add_argument('--type', choices=['departments', 'batches', 'classes', 'subjects', 'faculty', 'mappings', 'all'], default='all',
+    parser.add_argument('--type', choices=['departments', 'batches', 'classes', 'rooms', 'subjects', 'faculty', 'mappings', 'all'], default='all',
                         help='The import type to run.')
     parser.add_argument('--file', help='Path to a CSV file to import. If omitted, template files are used.')
     parser.add_argument('--template-dir', default=os.path.join(os.path.dirname(__file__), '..', 'csv_templates'),
@@ -263,6 +303,7 @@ def main():
         'departments': import_departments,
         'batches': import_batches,
         'classes': import_classes,
+        'rooms': import_rooms,
         'subjects': import_subjects,
         'faculty': import_faculty,
         'mappings': apply_mappings,

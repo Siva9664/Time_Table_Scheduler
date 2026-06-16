@@ -32,11 +32,25 @@ def class_helper(doc: dict, department: dict = None, batch: dict = None) -> dict
         "student_count": doc.get("student_count"),
         "department_id": doc.get("department_id"),
         "batch_id": doc.get("batch_id"),
+        "room_id": doc.get("room_id"),
         "created_at": doc.get("created_at", datetime.utcnow()),
         "department": department,
         "batch": batch,
     }
     return result
+
+
+def room_helper(doc: dict, department: dict = None) -> dict:
+    return {
+        "id": str(doc["_id"]),
+        "name": doc.get("name", ""),
+        "code": doc.get("code"),
+        "capacity": doc.get("capacity"),
+        "room_type": doc.get("room_type", "lecture"),
+        "department_id": doc.get("department_id"),
+        "created_at": doc.get("created_at", datetime.utcnow()),
+        "department": department,
+    }
 
 
 def subject_helper(doc: dict, assigned_class: dict = None) -> dict:
