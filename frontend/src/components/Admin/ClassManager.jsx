@@ -5,7 +5,7 @@ import { useToast } from '../../context/ToastContext';
 import { useFormCache } from '../../hooks/useFormCache';
 import ConfirmationModal from '../Layout/ConfirmationModal';
 import CsvUploader from '../Layout/CsvUploader';
-import { Edit, Trash2, Plus } from 'lucide-react';
+import { Edit, Trash2, Plus, GraduationCap } from 'lucide-react';
 
 export default function ClassManager() {
   const [classes, setClasses] = useState([]);
@@ -16,6 +16,7 @@ export default function ClassManager() {
   const [editData, setEditData] = useState(null);
   const { register, handleSubmit, reset, setValue, watch } = useForm();
   const { showToast } = useToast();
+  const [selectedDepartmentId, setSelectedDepartmentId] = useState(null);
 
   // Modal State
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -201,41 +202,118 @@ export default function ClassManager() {
         </div>
       )}
 
-      {classes.length === 0 ? (
-        <div className="card text-center py-12">
-          <p className="text-xl text-gray-600">There are no classes.</p>
-          <p className="text-gray-500 mt-2">Kindly add it.</p>
+      {/* Department Cards Grid */}
+      <div className="mb-8">
+        <h2 className="text-lg font-semibold text-gray-700 mb-4 flex items-center gap-2">
+          <GraduationCap className="text-blue-500" size={22} />
+          Select Department
+        </h2>
+        
+        {departments.length === 0 ? (
+          <div className="p-4 bg-gray-50 rounded-lg text-gray-500 text-sm">
+            No departments available. Please create departments first.
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+            {departments.map((dept) => {
+              const deptClasses = classes.filter(cls => cls.department_id === dept.id);
+              const classCount = deptClasses.length;
+              const isSelected = selectedDepartmentId === dept.id;
+              
+              return (
+                <button
+                  key={dept.id}
+                  onClick={() => setSelectedDepartmentId(isSelected ? null : dept.id)}
+                  className={`w-full text-left rounded-xl p-4 transition-all duration-300 border flex flex-col justify-between h-28 hover:-translate-y-1 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-blue-500/20 ${
+                    isSelected
+                      ? 'bg-gradient-to-br from-blue-600 to-indigo-600 text-white border-transparent shadow-lg shadow-blue-500/10'
+                      : 'bg-white text-gray-800 border-gray-100 hover:border-blue-100 hover:bg-blue-50/10'
+                  }`}
+                >
+                  <div className="w-full">
+                    <div className="flex justify-between items-start">
+                      <span className={`text-xl font-bold tracking-wider ${isSelected ? 'text-white' : 'text-gray-900'}`}>
+                        {dept.code}
+                      </span>
+                    </div>
+                    <p className={`text-xs truncate font-normal mt-1 ${isSelected ? 'text-blue-100' : 'text-gray-500'}`} title={dept.name}>
+                      {dept.name}
+                    </p>
+                  </div>
+                  <div className={`text-xs font-semibold self-end px-2.5 py-1 rounded-full ${
+                    isSelected ? 'bg-white/20 text-white' : 'bg-gray-50 text-gray-600'
+                  }`}>
+                    {classCount} {classCount === 1 ? 'Class' : 'Classes'}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {selectedDepartmentId === null ? (
+        <div className="card text-center py-16 bg-white border border-dashed border-gray-200 rounded-xl shadow-sm">
+          <div className="max-w-md mx-auto flex flex-col items-center">
+            <div className="w-16 h-16 rounded-full bg-blue-50 flex items-center justify-center text-blue-600 mb-4 animate-pulse">
+              <GraduationCap size={32} />
+            </div>
+            <p className="text-xl font-bold text-gray-800">Select a Department</p>
+            <p className="text-gray-500 mt-2 text-sm leading-relaxed">
+              Please click on one of the department cards above to view and manage its classes.
+            </p>
+          </div>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {classes.map(cls => (
-            <div key={cls.id} className="card relative group hover:shadow-lg transition-shadow">
-              <div className="absolute top-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button
-                  onClick={() => handleEdit(cls)}
-                  className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
-                  title="Edit Class"
-                >
-                  <Edit size={18} />
-                </button>
-                <button
-                  onClick={() => handleDeleteClick(cls.id)}
-                  className="p-1.5 text-red-600 hover:bg-red-50 rounded-full transition-colors"
-                  title="Delete Class"
-                >
-                  <Trash2 size={18} />
-                </button>
-              </div>
+        <div>
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-lg font-semibold text-gray-700">
+              Classes in {departments.find(d => d.id === selectedDepartmentId)?.name || 'Selected Department'}
+            </h2>
+            <span className="text-sm bg-blue-50 text-blue-700 px-3 py-1 rounded-full font-medium">
+              {classes.filter(cls => cls.department_id === selectedDepartmentId).length} Found
+            </span>
+          </div>
 
-              <h3 className="text-xl font-bold pr-16">{cls.name} {cls.section}</h3>
-              <div className="mt-2 space-y-1 text-sm text-gray-600">
-                <p>Semester: <span className="font-medium text-gray-800">{cls.semester}</span></p>
-                <p>Students: <span className="font-medium text-gray-800">{cls.student_count}</span></p>
-                <p>Batch: <span className="font-medium text-gray-800">{getBatchName(cls.batch_id)}</span></p>
-                <p>Room: <span className="font-medium text-gray-800">{getRoomName(cls.room_id)}</span></p>
-              </div>
+          {classes.filter(cls => cls.department_id === selectedDepartmentId).length === 0 ? (
+            <div className="card text-center py-12 bg-white border border-gray-100 rounded-xl">
+              <p className="text-lg font-semibold text-gray-700">No classes configured.</p>
+              <p className="text-gray-500 mt-1 text-sm">Create a new class for this department using the "Add Class" button above.</p>
             </div>
-          ))}
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {classes
+                .filter(cls => cls.department_id === selectedDepartmentId)
+                .map(cls => (
+                  <div key={cls.id} className="card relative group hover:shadow-lg transition-shadow">
+                    <div className="absolute top-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={() => handleEdit(cls)}
+                        className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+                        title="Edit Class"
+                      >
+                        <Edit size={18} />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteClick(cls.id)}
+                        className="p-1.5 text-red-600 hover:bg-red-50 rounded-full transition-colors"
+                        title="Delete Class"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
+
+                    <h3 className="text-xl font-bold pr-16">{cls.name} {cls.section}</h3>
+                    <div className="mt-2 space-y-1 text-sm text-gray-600">
+                      <p>Semester: <span className="font-medium text-gray-800">{cls.semester}</span></p>
+                      <p>Students: <span className="font-medium text-gray-800">{cls.student_count}</span></p>
+                      <p>Batch: <span className="font-medium text-gray-800">{getBatchName(cls.batch_id)}</span></p>
+                      <p>Room: <span className="font-medium text-gray-800">{getRoomName(cls.room_id)}</span></p>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )}
         </div>
       )}
     </div>

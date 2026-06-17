@@ -4,6 +4,7 @@ import { batchAPI } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
 import { useFormCache } from '../../hooks/useFormCache';
 import ConfirmationModal from '../Layout/ConfirmationModal';
+import CsvUploader from '../Layout/CsvUploader';
 import { Edit, Trash2, Plus } from 'lucide-react';
 
 export default function BatchManager() {
@@ -82,9 +83,9 @@ export default function BatchManager() {
         }
 
         setShowForm(true);
-    setTimeout(() => {
-        document.querySelector('.main-content')?.scrollTo({ top: 0, behavior: 'smooth' });
-    }, 50);
+        setTimeout(() => {
+            document.querySelector('.main-content')?.scrollTo({ top: 0, behavior: 'smooth' });
+        }, 50);
     };
 
     const onSubmit = async (data) => {
@@ -162,26 +163,29 @@ export default function BatchManager() {
 
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
                 <h1 className="text-3xl font-bold">Batch Configurations</h1>
-                <button
-                    onClick={() => {
-                        // If opening the form for a new batch, clear previous state and cache
-                        if (!showForm) {
-                            setEditData(null);
-                            reset();
-                            clearCache();
-                            setBreaks([]);
-                            setShowForm(true);
-    setTimeout(() => {
-        document.querySelector('.main-content')?.scrollTo({ top: 0, behavior: 'smooth' });
-    }, 50);
-                            return;
-                        }
-                        setShowForm(false);
-                    }}
-                    className="btn btn-primary flex items-center gap-2"
-                >
-                    {showForm ? 'Cancel' : <><Plus size={20} /> Add Batch</>}
-                </button>
+                <div className="flex gap-2">
+                    <CsvUploader type="batches" onSuccess={loadBatches} />
+                    <button
+                        onClick={() => {
+                            // If opening the form for a new batch, clear previous state and cache
+                            if (!showForm) {
+                                setEditData(null);
+                                reset();
+                                clearCache();
+                                setBreaks([]);
+                                setShowForm(true);
+                                setTimeout(() => {
+                                    document.querySelector('.main-content')?.scrollTo({ top: 0, behavior: 'smooth' });
+                                }, 50);
+                                return;
+                            }
+                            setShowForm(false);
+                        }}
+                        className="btn btn-primary flex items-center gap-2"
+                    >
+                        {showForm ? 'Cancel' : <><Plus size={20} /> Add Batch</>}
+                    </button>
+                </div>
             </div>
 
             {showForm && (
