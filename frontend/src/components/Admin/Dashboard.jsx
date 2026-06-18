@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { departmentAPI, classAPI, facultyAPI, timetableAPI } from '../../services/api';
+import api, { clearApiCache, departmentAPI, classAPI, facultyAPI, timetableAPI } from '../../services/api';
 import { isAdmin, getUser } from '../../utils/auth';
+import { useToast } from '../../context/ToastContext';
 import {
   Users,
   BookOpen,
@@ -13,13 +14,18 @@ import {
   Clock,
   ChevronRight,
   User,
-  Download
+  Download,
+  Upload
 } from 'lucide-react';
 
 export default function Dashboard() {
   const [stats, setStats] = useState({ departments: 0, classes: 0, faculty: 0, timetables: 0 });
   const [loading, setLoading] = useState(true);
+  const [bulkImporting, setBulkImporting] = useState(false);
+  const [bulkImportResults, setBulkImportResults] = useState([]);
+  const folderInputRef = useRef(null);
   const navigate = useNavigate();
+  const { showToast } = useToast();
   const admin = isAdmin();
   const user = getUser();
 
@@ -53,6 +59,41 @@ export default function Dashboard() {
     navigate(path);
   };
 
+  const handleFullDataFetch = async (event) => {
+    const files = Array.from(event.target.files || []).filter((file) => file.name.toLowerCase().endsWith('.csv'));
+    if (!files.length) return;
+
+    const form = new FormData();
+    files.forEach((file) => form.append('files', file));
+
+    setBulkImporting(true);
+    setBulkImportResults([]);
+
+    try {
+      const res = await api.post('/imports/upload-folder', form);
+      const data = res.data || {};
+
+      setBulkImportResults(data.results || []);
+      clearApiCache();
+      await loadStats();
+
+      const failed = Number(data.failed || 0);
+      const partial = Number(data.partial || 0);
+      showToast(
+        failed || partial
+          ? `Imported with ${failed} failed and ${partial} partial CSV file(s)`
+          : `Imported ${data.imported || 0} records from folder`,
+        failed ? 'error' : partial ? 'warning' : 'success'
+      );
+    } catch (error) {
+      console.error(error);
+      showToast(error.response?.data?.detail || error.message || 'Folder import failed', 'error');
+    } finally {
+      setBulkImporting(false);
+      if (folderInputRef.current) folderInputRef.current.value = '';
+    }
+  };
+
   const StatCard = ({ title, value, color, path }) => (
     <div
       onClick={() => handleStatClick(path)}
@@ -69,10 +110,11 @@ export default function Dashboard() {
     </div>
   );
 
-  const ActionButton = ({ icon: Icon, label, color, onClick }) => (
+  const ActionButton = ({ icon: Icon, label, color, onClick, disabled = false }) => (
     <button
       onClick={onClick}
-      className={`flex items-center gap-2 px-5 py-3 rounded-xl font-bold text-sm transition-all duration-200 shadow-md hover:shadow-lg active:scale-95 ${color} text-white`}
+      disabled={disabled}
+      className={`flex items-center gap-2 px-5 py-3 rounded-xl font-bold text-sm transition-all duration-200 shadow-md hover:shadow-lg active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed disabled:active:scale-100 ${color} text-white`}
     >
       <Icon size={18} />
       {label}
@@ -131,9 +173,26 @@ export default function Dashboard() {
         <div className="flex flex-wrap gap-4">
           {admin ? (
             <>
+              <input
+                ref={folderInputRef}
+                type="file"
+                accept=".csv"
+                multiple
+                webkitdirectory=""
+                directory=""
+                onChange={handleFullDataFetch}
+                className="hidden"
+              />
               <ActionButton icon={BookOpen} label="Manage Subjects" color="bg-slate-700" onClick={() => navigate('/subjects')} />
               <ActionButton icon={Users} label="Faculty Mapping" color="bg-blue-600" onClick={() => navigate('/mapping')} />
               <ActionButton icon={Calendar} label="View Timetables" color="bg-orange-500" onClick={() => navigate('/view')} />
+              <ActionButton
+                icon={Upload}
+                label={bulkImporting ? 'Fetching CSVs...' : 'Full Data Fetch'}
+                color="bg-emerald-600"
+                onClick={() => folderInputRef.current?.click()}
+                disabled={bulkImporting}
+              />
               <ActionButton icon={Download} label="Download Templates" color="bg-purple-600" onClick={() => { window.location.href = '/api/imports/templates'; }} />
               <ActionButton icon={Plus} label="Generate New" color="bg-slate-600" onClick={() => navigate('/generate')} />
             </>
@@ -141,6 +200,30 @@ export default function Dashboard() {
             <ActionButton icon={Calendar} label="View All Timetables" color="bg-primary-600" onClick={() => navigate('/view')} />
           )}
         </div>
+        {admin && bulkImportResults.length > 0 && (
+          <div className="mt-6 rounded-xl border border-slate-200 overflow-hidden">
+            <div className="grid grid-cols-[1.2fr_0.8fr_0.8fr] bg-slate-50 px-4 py-2 text-xs font-black uppercase tracking-wider text-slate-500">
+              <span>CSV File</span>
+              <span>Status</span>
+              <span>Imported</span>
+            </div>
+            {bulkImportResults.map((item, index) => (
+              <div key={`${item.file}-${index}`} className="grid grid-cols-[1.2fr_0.8fr_0.8fr] gap-3 border-t border-slate-100 px-4 py-3 text-sm">
+                <span className="font-semibold text-slate-700 break-all">{item.file}</span>
+                <span className={`font-bold ${item.status === 'success' ? 'text-emerald-600' : item.status === 'partial' ? 'text-amber-600' : item.status === 'failed' ? 'text-red-600' : 'text-slate-500'}`}>
+                  {item.status}
+                </span>
+                <span className="text-slate-600">
+                  {item.imported ?? '-'}
+                  {item.skipped ? ` (${item.skipped} skipped)` : ''}
+                </span>
+                {item.message && (
+                  <span className="col-span-3 text-xs text-slate-500 break-words">{item.message}</span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Recent Activity Section */}

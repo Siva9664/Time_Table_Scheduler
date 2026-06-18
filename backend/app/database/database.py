@@ -17,7 +17,7 @@ def get_client() -> MongoClient:
     if _client is not None:
         return _client
     
-    # Try MongoDB Atlas
+    # Try MongoDB Atlas, unless local MongoDB is explicitly enabled in .env.
     try:
         conn_args = {
             "serverSelectionTimeoutMS": 10000,
@@ -27,24 +27,23 @@ def get_client() -> MongoClient:
             "maxPoolSize": 10
         }
         
-        # Connect to Atlas
-        _client = MongoClient(settings.MONGODB_URL, **conn_args)
+        _client = MongoClient(settings.active_mongodb_url, **conn_args)
         _client.admin.command('ping')
         _connection_ready = True
-        logger.info("[SUCCESS] Successfully connected to MongoDB Atlas!")
+        logger.info("[SUCCESS] Successfully connected to MongoDB!")
         return _client
     except Exception as e:
-        logger.warning(f"[WARNING] Primary Atlas connection failed: {str(e)[:200]}")
+        logger.warning(f"[WARNING] Primary MongoDB connection failed: {str(e)[:200]}")
         try:
             # Try once more with SSL verification disabled
-            logger.info("Retrying Atlas with SSL verification disabled...")
-            _client = MongoClient(settings.MONGODB_URL, tlsAllowInvalidCertificates=True, **conn_args)
+            logger.info("Retrying MongoDB with SSL verification disabled...")
+            _client = MongoClient(settings.active_mongodb_url, tlsAllowInvalidCertificates=True, **conn_args)
             _client.admin.command('ping')
             _connection_ready = True
-            logger.info("[SUCCESS] Connected to MongoDB Atlas (SSL Safety Disabled)")
+            logger.info("[SUCCESS] Connected to MongoDB (SSL Safety Disabled)")
             return _client
         except Exception as e2:
-            logger.error(f"[ERROR] Failed to reach Atlas: {str(e2)[:200]}")
+            logger.error(f"[ERROR] Failed to reach primary MongoDB: {str(e2)[:200]}")
         
         # Fallback to local MongoDB
         try:

@@ -1,6 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { useToast } from '../../context/ToastContext';
 import { Upload } from 'lucide-react';
+import api, { clearApiCache } from '../../services/api';
 
 export default function CsvUploader({ type, onSuccess, className, style }) {
   const inputRef = useRef();
@@ -15,10 +16,13 @@ export default function CsvUploader({ type, onSuccess, className, style }) {
     form.append('file', file);
     setLoading(true);
     try {
-      const res = await fetch('/api/imports/upload', { method: 'POST', body: form });
-      if (!res.ok) throw new Error('Upload failed');
-      const data = await res.json();
-      showToast(`Imported ${data.imported} ${data.type}`, 'success');
+      const res = await api.post('/imports/upload', form);
+      const data = res.data || {};
+      const issueCount = Number(data.error_count || 0) + Number(data.warning_count || 0);
+      const status = data.error_count ? 'warning' : 'success';
+      const message = data.message || `Imported ${data.imported || 0} ${data.type || type}`;
+      showToast(issueCount ? message : `Imported ${data.imported || 0} ${data.type || type}`, status);
+      clearApiCache();
       // Prefer callback (no full-page reload), fall back to reload if none provided
       if (onSuccess) {
         onSuccess();
@@ -27,7 +31,7 @@ export default function CsvUploader({ type, onSuccess, className, style }) {
       }
     } catch (err) {
       console.error(err);
-      showToast('CSV upload failed', 'error');
+      showToast(err.response?.data?.detail || err.message || 'CSV upload failed', 'error');
     } finally {
       setLoading(false);
       // Reset file input so same file can be re-uploaded

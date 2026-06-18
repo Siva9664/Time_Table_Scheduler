@@ -42,7 +42,7 @@ async def startup_event():
     try:
         client = get_client()
         client.admin.command("ping")
-        logger.info(f"[SUCCESS] Connected to MongoDB at {_mask_mongo_url(settings.MONGODB_URL)} | DB: {settings.DB_NAME}")
+        logger.info(f"[SUCCESS] Connected to MongoDB at {_mask_mongo_url(settings.active_mongodb_url)} | DB: {settings.DB_NAME}")
     except Exception as e:
         logger.error(f"[ERROR] Could not connect to MongoDB: {e}")
 

@@ -36,6 +36,8 @@ Copy `backend/.env.example` to `backend/.env` and update the values.
 Example `backend/.env`:
 ```env
 MONGODB_URL=mongodb+srv://username:password@cluster.mongodb.net/?appName=Scheduler
+USE_LOCAL_MONGODB=false
+LOCAL_MONGODB_URL=mongodb://localhost:27017
 DB_NAME=Time-Table-Scheduler
 SECRET_KEY=your-secret-key
 ALGORITHM=HS256
@@ -47,6 +49,8 @@ OPENAI_API_KEY=your-grok-api-key
 OPENAI_API_BASE=https://api.openai.com/v1
 OPENAI_TIMEOUT_SECONDS=60
 ```
+
+Set `USE_LOCAL_MONGODB=true` when you want to test with MongoDB Compass/local MongoDB. Set it back to `false` to use Atlas automatically.
 
 `AI_MODEL` should be set to a Grok/OpenAI-compatible model such as `grok-1`.
 

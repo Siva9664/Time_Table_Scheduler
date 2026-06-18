@@ -1,8 +1,13 @@
 from pydantic_settings import BaseSettings
 from typing import List, Optional
+from pathlib import Path
+
+BACKEND_DIR = Path(__file__).resolve().parents[2]
 
 class Settings(BaseSettings):
     MONGODB_URL: str = "mongodb://localhost:27017"
+    USE_LOCAL_MONGODB: bool = False
+    LOCAL_MONGODB_URL: str = "mongodb://localhost:27017"
     DB_NAME: str = "timetable_db"
     SECRET_KEY: str = "supersecretkey123"
     ALGORITHM: str = "HS256"
@@ -18,7 +23,11 @@ class Settings(BaseSettings):
     def origins_list(self) -> List[str]:
         return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",")]
 
+    @property
+    def active_mongodb_url(self) -> str:
+        return self.LOCAL_MONGODB_URL if self.USE_LOCAL_MONGODB else self.MONGODB_URL
+
     class Config:
-        env_file = ".env"
+        env_file = BACKEND_DIR / ".env"
 
 settings = Settings()
