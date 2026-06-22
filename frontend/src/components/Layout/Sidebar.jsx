@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { isAdmin } from '../../utils/auth';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { isAdmin, removeToken } from '../../utils/auth';
 import {
     Menu,
     LayoutDashboard,
@@ -34,10 +34,17 @@ const Icons = {
 
 export default function Sidebar() {
     const location = useLocation();
+    const navigate = useNavigate();
     const [isExpanded, setIsExpanded] = useState(false);
     const admin = isAdmin();
     
     const isActive = (path) => location.pathname === path;
+
+    const handleLogout = () => {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        window.location.href = '/login';
+    };
 
     const NavItem = ({ to, label, icon: Icon }) => (
         <Link
@@ -100,6 +107,24 @@ export default function Sidebar() {
                 <NavItem to="/view" label="Timetables" icon={Icons.Timetables} />
                 <NavItem to="/settings" label="Settings" icon={Icons.Settings} />
             </nav>
+
+            <div className="border-t border-slate-800/50 p-2">
+                <button
+                    onClick={handleLogout}
+                    className="flex items-center w-full h-12 px-4 rounded-xl text-slate-400 hover:bg-red-500/10 hover:text-red-400 group transition-all duration-300 relative cursor-pointer"
+                >
+                    <Icons.Logout size={22} className="shrink-0" />
+                    <span className={`ml-4 font-bold text-sm whitespace-nowrap overflow-hidden transition-all duration-1000 ease ${isExpanded ? 'max-w-[200px] opacity-100' : 'max-w-0 opacity-0'
+                        }`}>
+                        Logout
+                    </span>
+                    {!isExpanded && (
+                        <div className="absolute left-16 bg-red-600 text-white px-3 py-1.5 rounded-md text-xs font-bold opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-300 ease whitespace-nowrap shadow-xl z-50">
+                            Logout
+                        </div>
+                    )}
+                </button>
+            </div>
         </div>
     );
 }

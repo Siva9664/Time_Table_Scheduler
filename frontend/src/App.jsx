@@ -1,5 +1,7 @@
 import React, { Suspense } from 'react';
-import { BrowserRouter as Router, Routes, Route, useLocation, Outlet } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useLocation, Outlet, Navigate } from 'react-router-dom';
+import { isAuthenticated } from './utils/auth';
+
 const Dashboard = React.lazy(() => import('./components/Admin/Dashboard'));
 const DepartmentManager = React.lazy(() => import('./components/Admin/DepartmentManager'));
 const ClassManager = React.lazy(() => import('./components/Admin/ClassManager'));
@@ -11,8 +13,25 @@ const FacultyMapping = React.lazy(() => import('./components/Admin/FacultyMappin
 const TimetableGenerator = React.lazy(() => import('./components/Timetable/TimetableGenerator'));
 const TimetableView = React.lazy(() => import('./components/Timetable/TimetableView'));
 const Settings = React.lazy(() => import('./components/Admin/Settings'));
+const Login = React.lazy(() => import('./components/Login'));
 import Sidebar from './components/Layout/Sidebar';
 import { ToastProvider } from './context/ToastContext';
+
+// ProtectedRoute checks if user is logged in before rendering children
+const ProtectedRoute = ({ children }) => {
+  if (!isAuthenticated()) {
+    return <Navigate to="/login" replace />;
+  }
+  return children;
+};
+
+// LoginRoute redirects to dashboard if user is already logged in
+const LoginRoute = () => {
+  if (isAuthenticated()) {
+    return <Navigate to="/" replace />;
+  }
+  return <Login />;
+};
 
 function App() {
   const MainLayout = () => {
@@ -41,20 +60,27 @@ function App() {
             </div>
         }>
           <Routes>
+            <Route path="/login" element={<LoginRoute />} />
 
-          <Route path="/" element={<MainLayout />}>
-            <Route index element={<Dashboard />} />
-            <Route path="departments" element={<DepartmentManager />} />
-            <Route path="batches" element={<BatchManager />} />
-            <Route path="classes" element={<ClassManager />} />
-            <Route path="rooms" element={<RoomManager />} />
-            <Route path="subjects" element={<SubjectManager />} />
-            <Route path="faculty" element={<FacultyManager />} />
-            <Route path="mapping" element={<FacultyMapping />} />
-            <Route path="generate" element={<TimetableGenerator />} />
-            <Route path="view" element={<TimetableView />} />
-            <Route path="settings" element={<Settings />} />
-          </Route>
+            <Route path="/" element={
+              <ProtectedRoute>
+                <MainLayout />
+              </ProtectedRoute>
+            }>
+              <Route index element={<Dashboard />} />
+              <Route path="departments" element={<DepartmentManager />} />
+              <Route path="batches" element={<BatchManager />} />
+              <Route path="classes" element={<ClassManager />} />
+              <Route path="rooms" element={<RoomManager />} />
+              <Route path="subjects" element={<SubjectManager />} />
+              <Route path="faculty" element={<FacultyManager />} />
+              <Route path="mapping" element={<FacultyMapping />} />
+              <Route path="generate" element={<TimetableGenerator />} />
+              <Route path="view" element={<TimetableView />} />
+              <Route path="settings" element={<Settings />} />
+            </Route>
+
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Suspense>
       </Router>
