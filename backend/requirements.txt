@@ -10,3 +10,9 @@ ortools
 python-dotenv==1.0.0
 email-validator
 openai
+pypdf
+openpyxl
+python-docx
+pillow
+pytesseract
+pdf2image

@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_API_BASE: str = "https://api.openai.com/v1"
     OPENAI_TIMEOUT_SECONDS: int = 60
+    DOCUMENT_UPLOAD_MAX_FILES: int = 10
+    DOCUMENT_UPLOAD_MAX_FILE_BYTES: int = 15 * 1024 * 1024
+    DOCUMENT_TEXT_MAX_CHARS: int = 200_000
+    DOCUMENT_OCR_MAX_PAGES: int = 6
 
     @property
     def origins_list(self) -> List[str]:

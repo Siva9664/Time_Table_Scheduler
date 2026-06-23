@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
+import { FileText, Loader2, Upload, X } from 'lucide-react';
 import { timetableAPI } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
 
@@ -80,9 +81,68 @@ function SubstitutesPanel({ substitutes }) {
 
 export default function TimetableGenerator() {
   const [generating, setGenerating] = useState(false);
+  const [extractingFiles, setExtractingFiles] = useState(false);
   const [result, setResult] = useState(null);
-  const { register, handleSubmit } = useForm();
+  const [constraintFiles, setConstraintFiles] = useState([]);
+  const [fileConstraintReport, setFileConstraintReport] = useState(null);
+  const fileInputRef = useRef(null);
+  const { register, handleSubmit, getValues, setValue } = useForm();
   const { showToast } = useToast();
+
+  const handleConstraintFileSelect = (event) => {
+    const selected = Array.from(event.target.files || []);
+    if (!selected.length) return;
+    setConstraintFiles((current) => [...current, ...selected].slice(0, 10));
+    setFileConstraintReport(null);
+    event.target.value = '';
+  };
+
+  const removeConstraintFile = (index) => {
+    setConstraintFiles((current) => current.filter((_, i) => i !== index));
+    setFileConstraintReport(null);
+  };
+
+  const clearConstraintFiles = () => {
+    setConstraintFiles([]);
+    setFileConstraintReport(null);
+  };
+
+  const buildConstraintsFromFiles = async () => {
+    if (!constraintFiles.length) {
+      showToast('Add at least one timetable file first.', 'error');
+      return;
+    }
+
+    setExtractingFiles(true);
+    try {
+      const response = await timetableAPI.generateConstraintsFromFiles(constraintFiles, {
+        periods_per_day: 9,
+      });
+      const generatedText = response.data?.constraints_text || '';
+      if (!generatedText.trim()) {
+        showToast('No constraints could be generated from those files.', 'error');
+        return;
+      }
+
+      const existingText = (getValues('constraints_text') || '').trim();
+      const nextText = existingText ? `${existingText}\n\n${generatedText}` : generatedText;
+      setValue('constraints_text', nextText, { shouldDirty: true, shouldTouch: true });
+      setFileConstraintReport(response.data);
+
+      const count = response.data?.custom_constraints?.length || 0;
+      showToast(`${count || 'Some'} constraints generated from uploaded files.`, 'success');
+    } catch (error) {
+      showToast(error.response?.data?.detail || 'Failed to read timetable files', 'error');
+    } finally {
+      setExtractingFiles(false);
+    }
+  };
+
+  const formatFileSize = (file) => {
+    if (!file?.size) return '';
+    if (file.size < 1024 * 1024) return `${Math.max(1, Math.round(file.size / 1024))} KB`;
+    return `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
+  };
 
   const onSubmit = async (data) => {
     setGenerating(true);
@@ -160,6 +220,93 @@ export default function TimetableGenerator() {
             <p className="text-xs text-gray-500 mb-3">
               Type in plain English. The AI will parse and auto-correct names, typos, and common patterns.
             </p>
+
+            <div className="rounded-xl border border-dashed border-indigo-200 bg-indigo-50/40 p-3 mb-3">
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={handleConstraintFileSelect}
+              />
+
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="btn btn-secondary flex items-center justify-center gap-2 text-sm"
+                >
+                  <Upload size={16} />
+                  Add Files
+                </button>
+                <button
+                  type="button"
+                  onClick={buildConstraintsFromFiles}
+                  disabled={!constraintFiles.length || extractingFiles}
+                  className="btn btn-primary flex items-center justify-center gap-2 text-sm disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {extractingFiles ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
+                  Generate Constraints
+                </button>
+                {constraintFiles.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={clearConstraintFiles}
+                    className="text-xs text-gray-500 hover:text-red-600 px-2 py-2"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+
+              {constraintFiles.length > 0 && (
+                <div className="flex flex-wrap gap-2 mt-3">
+                  {constraintFiles.map((file, index) => (
+                    <span
+                      key={`${file.name}-${index}`}
+                      className="inline-flex max-w-full items-center gap-2 rounded-lg bg-white border border-indigo-100 px-2 py-1 text-xs text-gray-700"
+                    >
+                      <FileText size={14} className="text-indigo-500 flex-shrink-0" />
+                      <span className="truncate max-w-[220px]">{file.name}</span>
+                      <span className="text-gray-400 flex-shrink-0">{formatFileSize(file)}</span>
+                      <button
+                        type="button"
+                        onClick={() => removeConstraintFile(index)}
+                        className="text-gray-400 hover:text-red-500 flex-shrink-0"
+                        title={`Remove ${file.name}`}
+                      >
+                        <X size={14} />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {fileConstraintReport && (
+                <div className="mt-3 rounded-lg border border-indigo-100 bg-white p-3 text-xs text-gray-600">
+                  <div className="font-semibold text-indigo-700 mb-2">
+                    {fileConstraintReport.custom_constraints?.length || 0} parsed constraints
+                  </div>
+                  <div className="space-y-1">
+                    {fileConstraintReport.files?.map((file, index) => (
+                      <div key={`${file.filename}-${index}`} className="flex flex-wrap gap-x-2">
+                        <span className="font-medium text-gray-700">{file.filename}</span>
+                        <span>{file.extractor}</span>
+                        <span>{file.characters} chars</span>
+                      </div>
+                    ))}
+                  </div>
+                  {fileConstraintReport.warnings?.length > 0 && (
+                    <ul className="mt-2 space-y-1 text-amber-700">
+                      {fileConstraintReport.warnings.slice(0, 4).map((warning, index) => (
+                        <li key={index}>{warning}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
+
             <textarea
               {...register('constraints_text')}
               className="input w-full h-36 text-sm font-mono"

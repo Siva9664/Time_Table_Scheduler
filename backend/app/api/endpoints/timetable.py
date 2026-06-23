@@ -1,7 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pymongo.database import Database
 from bson import ObjectId
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from datetime import datetime
 from ...database.database import get_db
 from ...models.timetable import (
@@ -12,6 +12,10 @@ from ...schemas.timetable import *
 from ...core.security import get_current_user, get_admin_user, get_tenant_db
 from ...services.scheduler import TimetableScheduler
 from ...services.ai_parser import AIConstraintParser
+from ...services.document_constraints import (
+    build_constraint_text_from_documents,
+    extract_document_text,
+)
 from ...core.config import settings
 
 router = APIRouter(redirect_slashes=False)
@@ -23,6 +27,35 @@ def _oid(id_str: str) -> ObjectId:
         return ObjectId(id_str)
     except Exception:
         raise HTTPException(status_code=422, detail=f"Invalid id: {id_str}")
+
+
+def _build_ai_constraint_context(db: Database, periods_per_day: int) -> Dict[str, Any]:
+    faculty_docs = list(db["faculty"].find({}, {"name": 1}))
+    subject_docs = list(db["subjects"].find({}, {"name": 1, "code": 1, "requires_lab": 1}))
+    class_docs = list(db["classes"].find({}, {"name": 1, "section": 1}))
+
+    subject_names = []
+    seen_subject_names = set()
+    for subject in subject_docs:
+        for value in (subject.get("name"), subject.get("code")):
+            if value and value not in seen_subject_names:
+                subject_names.append(value)
+                seen_subject_names.add(value)
+            if value and subject.get("requires_lab"):
+                lab_alias = f"{value} Lab"
+                if lab_alias not in seen_subject_names:
+                    subject_names.append(lab_alias)
+                    seen_subject_names.add(lab_alias)
+
+    return {
+        "faculty_names": [d["name"] for d in faculty_docs if d.get("name")],
+        "subject_names": subject_names,
+        "class_names": [
+            f"{d.get('name', '')} {d.get('section', '')}".strip()
+            for d in class_docs if d.get("name")
+        ],
+        "periods_per_day": periods_per_day,
+    }
 
 # ── Batches ───────────────────────────────────────────────────────────────────
 
@@ -387,6 +420,89 @@ def update_faculty(id: str, fac: FacultyUpdate, db: Database = Depends(get_tenan
 
 # ── Timetable Generation ──────────────────────────────────────────────────────
 
+@router.post("/constraints/from-files")
+async def generate_constraints_from_files(
+    files: List[UploadFile] = File(...),
+    periods_per_day: int = Form(9),
+    db: Database = Depends(get_tenant_db),
+    current_user: dict = Depends(get_admin_user),
+):
+    if not files:
+        raise HTTPException(status_code=400, detail="Upload at least one timetable or constraint file.")
+    if len(files) > settings.DOCUMENT_UPLOAD_MAX_FILES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Upload up to {settings.DOCUMENT_UPLOAD_MAX_FILES} files at a time.",
+        )
+
+    extracted_documents = []
+    for file in files:
+        content = await file.read()
+        if len(content) > settings.DOCUMENT_UPLOAD_MAX_FILE_BYTES:
+            limit_mb = settings.DOCUMENT_UPLOAD_MAX_FILE_BYTES // (1024 * 1024)
+            raise HTTPException(
+                status_code=413,
+                detail=f"{file.filename or 'Uploaded file'} is larger than the {limit_mb} MB limit.",
+            )
+
+        extracted_documents.append(
+            extract_document_text(
+                file.filename or "uploaded-file",
+                content,
+                file.content_type,
+                max_chars=settings.DOCUMENT_TEXT_MAX_CHARS,
+                ocr_max_pages=settings.DOCUMENT_OCR_MAX_PAGES,
+            )
+        )
+
+    context = _build_ai_constraint_context(db, periods_per_day)
+    constraints_text, detected_constraints, conversion_warnings = build_constraint_text_from_documents(
+        extracted_documents,
+        context,
+    )
+
+    if not constraints_text.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="No readable timetable text could be extracted from the uploaded file(s).",
+        )
+
+    # Keep document parsing local. The generated text is parsed with the deterministic
+    # parser here; normal generation may still use the configured AI parser for user edits.
+    parser = AIConstraintParser(context=context)
+    parse_result = parser.parse_constraints_with_diagnostics(constraints_text)
+    file_warnings = [
+        warning
+        for document in extracted_documents
+        for warning in document.warnings
+    ]
+
+    return {
+        "constraints_text": constraints_text,
+        "custom_constraints": parse_result.get("constraints", []),
+        "detected_constraints": detected_constraints,
+        "parse_diagnostics": {
+            "corrections": parse_result.get("corrections", []),
+            "warnings": parse_result.get("warnings", []),
+            "unrecognized": parse_result.get("unrecognized", []),
+        },
+        "files": [
+            {
+                "filename": document.filename,
+                "content_type": document.content_type,
+                "extractor": document.extractor,
+                "characters": len(document.text),
+                "warnings": document.warnings,
+            }
+            for document in extracted_documents
+        ],
+        "warnings": conversion_warnings + file_warnings,
+        "extracted_text_preview": "\n\n".join(
+            document.text[:2000] for document in extracted_documents if document.text.strip()
+        )[:6000],
+    }
+
+
 @router.post("/generate", response_model=TimetableResponse)
 def generate_timetable(request: TimetableGenerateRequest, db: Database = Depends(get_tenant_db), current_user: dict = Depends(get_admin_user)):
     custom_constraints = []
@@ -394,32 +510,7 @@ def generate_timetable(request: TimetableGenerateRequest, db: Database = Depends
     if request.constraints_text:
         try:
             # ── Build context from live DB data so AI can match real names ──
-            faculty_docs  = list(db["faculty"].find({}, {"name": 1}))
-            subject_docs  = list(db["subjects"].find({}, {"name": 1, "code": 1, "requires_lab": 1}))
-            class_docs    = list(db["classes"].find({}, {"name": 1, "section": 1}))
-
-            subject_names = []
-            seen_subject_names = set()
-            for subject in subject_docs:
-                for value in (subject.get("name"), subject.get("code")):
-                    if value and value not in seen_subject_names:
-                        subject_names.append(value)
-                        seen_subject_names.add(value)
-                    if value and subject.get("requires_lab"):
-                        lab_alias = f"{value} Lab"
-                        if lab_alias not in seen_subject_names:
-                            subject_names.append(lab_alias)
-                            seen_subject_names.add(lab_alias)
-
-            context = {
-                "faculty_names": [d["name"] for d in faculty_docs  if d.get("name")],
-                "subject_names": subject_names,
-                "class_names":   [
-                    f"{d.get('name', '')} {d.get('section', '')}".strip()
-                    for d in class_docs if d.get("name")
-                ],
-                "periods_per_day": request.periods_per_day,
-            }
+            context = _build_ai_constraint_context(db, request.periods_per_day)
 
             parser = AIConstraintParser(
                 model=settings.AI_MODEL,

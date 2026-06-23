@@ -102,6 +102,16 @@ export const facultyAPI = {
 
 export const timetableAPI = {
   generate: (data) => api.post('/generate', data),
+  generateConstraintsFromFiles: (files, data = {}) => {
+    const formData = new FormData();
+    Array.from(files || []).forEach((file) => formData.append('files', file));
+    Object.entries(data).forEach(([key, value]) => {
+      if (value !== undefined && value !== null) formData.append(key, value);
+    });
+    return api.post('/constraints/from-files', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
   getAll: () => api.get('/timetables'),
   getById: (id) => api.get(`/timetables/${id}`),
   delete: (id) => api.delete(`/timetables/${id}`)
