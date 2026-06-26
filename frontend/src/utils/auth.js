@@ -79,8 +79,8 @@ export const firebaseEmailRegister = async (email, password, displayName) => {
     username: displayName || email.split('@')[0],
     full_name: displayName || email.split('@')[0],
     email: firebaseUser.email,
-    role: 'faculty',
-    is_admin: false,
+    role: 'admin',
+    is_admin: true,
   });
 
   return firebaseUser;

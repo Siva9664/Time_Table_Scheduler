@@ -1,12 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authAPI } from '../services/api';
-import { setToken, setUser, firebaseEmailLogin } from '../utils/auth';
+import { setToken, setUser, firebaseEmailLogin, firebaseEmailRegister } from '../utils/auth';
 import { useToast } from '../context/ToastContext';
 import {
   Calendar,
   Lock,
   User,
+  Mail,
   Eye,
   EyeOff,
   AlertCircle,
@@ -27,6 +28,9 @@ export default function Login() {
   const [rememberMe, setRememberMe] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [fullName, setFullName] = useState('');
+  const [email, setEmail] = useState('');
   const navigate = useNavigate();
   const { showToast } = useToast();
 
@@ -60,6 +64,46 @@ export default function Login() {
 
   const handleLogin = async (e) => {
     if (e) e.preventDefault();
+
+    if (isSignUp) {
+      if (!username.trim() || !email.trim() || !password.trim() || !fullName.trim()) {
+        setErrorMsg('Please fill in all fields.');
+        return;
+      }
+      setErrorMsg('');
+      setIsLoading(true);
+
+      try {
+        // 1. Register via Firebase Auth
+        const firebaseUser = await firebaseEmailRegister(email.trim(), password.trim(), fullName.trim());
+        
+        // 2. Call backend /api/auth/register to save to MongoDB and create database tenant
+        await authAPI.register({
+          uid: firebaseUser.uid,
+          username: username.trim(),
+          email: email.trim(),
+          full_name: fullName.trim(),
+          role: 'admin'
+        });
+
+        // 3. Fetch latest profile from backend to get tenant details and role
+        try {
+          const userRes = await authAPI.getCurrentUser();
+          setUser(userRes.data);
+        } catch (meErr) {
+          console.warn("Could not sync backend profile, fallback to local object", meErr);
+        }
+
+        showToast('Successfully registered new admin workspace!', 'success');
+        navigate('/');
+        return;
+      } catch (err) {
+        setErrorMsg(err.response?.data?.detail || err.message || 'Registration failed.');
+        setIsLoading(false);
+        return;
+      }
+    }
+
     if (!username.trim() || !password.trim()) {
       setErrorMsg('Please enter both username and password.');
       return;
@@ -71,16 +115,23 @@ export default function Login() {
     try {
       // 1. Try Firebase Authentication first
       const firebaseUser = await firebaseEmailLogin(username.trim(), password.trim());
-      const isAdminUser = firebaseUser.email?.toLowerCase().includes('admin');
       
-      setUser({
-        uid: firebaseUser.uid,
-        username: firebaseUser.displayName || firebaseUser.email.split('@')[0],
-        full_name: firebaseUser.displayName || firebaseUser.email.split('@')[0],
-        email: firebaseUser.email,
-        role: isAdminUser ? 'admin' : 'faculty',
-        is_admin: isAdminUser,
-      });
+      // Fetch profile from backend to get true role and tenant_db_name
+      try {
+        const userRes = await authAPI.getCurrentUser();
+        setUser(userRes.data);
+      } catch (meErr) {
+        // Fallback to local inference if backend fetch fails
+        const isAdminUser = firebaseUser.email?.toLowerCase().includes('admin');
+        setUser({
+          uid: firebaseUser.uid,
+          username: firebaseUser.displayName || firebaseUser.email.split('@')[0],
+          full_name: firebaseUser.displayName || firebaseUser.email.split('@')[0],
+          email: firebaseUser.email,
+          role: isAdminUser ? 'admin' : 'faculty',
+          is_admin: isAdminUser,
+        });
+      }
 
       showToast('Successfully logged in!', 'success');
       navigate('/');
@@ -231,10 +282,10 @@ export default function Login() {
             </div>
           </div>
           <h2 className="text-[34px] font-extrabold text-text-primary tracking-tight leading-none font-sans">
-            AI Timetable Scheduler
+            {isSignUp ? 'Create Workspace' : 'AI Timetable Scheduler'}
           </h2>
           <p className="text-[14px] font-medium text-text-secondary mt-2.5 max-w-[300px] leading-relaxed">
-            Generate Academic Schedules using Artificial Intelligence
+            {isSignUp ? 'Sign up as Admin to manage your isolated academic schedules' : 'Generate Academic Schedules using Artificial Intelligence'}
           </p>
         </div>
 
@@ -249,6 +300,30 @@ export default function Login() {
         {/* FORM */}
         <form onSubmit={handleLogin} className="space-y-5">
           
+          {/* FULL NAME INPUT (SIGN UP ONLY) */}
+          {isSignUp && (
+            <div className="relative flex items-center h-[58px] bg-[#F8FAFC] border border-transparent rounded-[16px] hover:border-accent-blue/30 focus-within:border-accent-blue focus-within:ring-[3px] focus-within:ring-accent-blue/15 transition-all duration-300">
+              <span className="absolute left-4 text-text-secondary/50 transition-colors pointer-events-none">
+                <User size={18} />
+              </span>
+              <input
+                id="fullName"
+                type="text"
+                required
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder=" "
+                className="peer w-full h-full pl-12 pr-4 pt-4 bg-transparent outline-none text-[15px] font-semibold text-text-primary"
+              />
+              <label
+                htmlFor="fullName"
+                className="absolute left-12 top-1/2 -translate-y-1/2 text-[14px] font-semibold text-text-secondary/50 pointer-events-none transition-all duration-200 peer-focus:text-[10px] peer-focus:translate-y-[-16px] peer-focus:text-accent-blue peer-[:not(:placeholder-shown)]:text-[10px] peer-[:not(:placeholder-shown)]:translate-y-[-16px]"
+              >
+                Full Name
+              </label>
+            </div>
+          )}
+
           {/* USERNAME INPUT */}
           <div className="relative flex items-center h-[58px] bg-[#F8FAFC] border border-transparent rounded-[16px] hover:border-accent-blue/30 focus-within:border-accent-blue focus-within:ring-[3px] focus-within:ring-accent-blue/15 transition-all duration-300">
             <span className="absolute left-4 text-text-secondary/50 transition-colors pointer-events-none">
@@ -267,9 +342,33 @@ export default function Login() {
               htmlFor="username"
               className="absolute left-12 top-1/2 -translate-y-1/2 text-[14px] font-semibold text-text-secondary/50 pointer-events-none transition-all duration-200 peer-focus:text-[10px] peer-focus:translate-y-[-16px] peer-focus:text-accent-blue peer-[:not(:placeholder-shown)]:text-[10px] peer-[:not(:placeholder-shown)]:translate-y-[-16px]"
             >
-              Username or Email
+              {isSignUp ? 'Username' : 'Email'}
             </label>
           </div>
+
+          {/* EMAIL INPUT (SIGN UP ONLY) */}
+          {isSignUp && (
+            <div className="relative flex items-center h-[58px] bg-[#F8FAFC] border border-transparent rounded-[16px] hover:border-accent-blue/30 focus-within:border-accent-blue focus-within:ring-[3px] focus-within:ring-accent-blue/15 transition-all duration-300">
+              <span className="absolute left-4 text-text-secondary/50 transition-colors pointer-events-none">
+                <Mail size={18} />
+              </span>
+              <input
+                id="email"
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder=" "
+                className="peer w-full h-full pl-12 pr-4 pt-4 bg-transparent outline-none text-[15px] font-semibold text-text-primary"
+              />
+              <label
+                htmlFor="email"
+                className="absolute left-12 top-1/2 -translate-y-1/2 text-[14px] font-semibold text-text-secondary/50 pointer-events-none transition-all duration-200 peer-focus:text-[10px] peer-focus:translate-y-[-16px] peer-focus:text-accent-blue peer-[:not(:placeholder-shown)]:text-[10px] peer-[:not(:placeholder-shown)]:translate-y-[-16px]"
+              >
+                Email Address
+              </label>
+            </div>
+          )}
 
           {/* PASSWORD INPUT */}
           <div className="relative flex items-center h-[58px] bg-[#F8FAFC] border border-transparent rounded-[16px] hover:border-accent-blue/30 focus-within:border-accent-blue focus-within:ring-[3px] focus-within:ring-accent-blue/15 transition-all duration-300">
@@ -303,17 +402,19 @@ export default function Login() {
             </div>
           </div>
 
-          {/* REMEMBER & FORGOT */}
-          <div className="flex items-center justify-between pt-1">
-            <button
-              type="button"
-              className="text-[13px] ml-66 font-bold text-black hover:text-grad-end transition-colors cursor-pointer"
-            >
-              Forgot password?
-            </button>
-          </div>
+          {/* REMEMBER & FORGOT (SIGN IN ONLY) */}
+          {!isSignUp && (
+            <div className="flex items-center justify-between pt-1">
+              <button
+                type="button"
+                className="text-[13px] ml-auto font-bold text-black hover:text-grad-end transition-colors cursor-pointer"
+              >
+                Forgot password?
+              </button>
+            </div>
+          )}
 
-          {/* SIGN IN BUTTON */}
+          {/* SUBMIT BUTTON */}
           <button
             type="submit"
             disabled={isLoading}
@@ -323,62 +424,78 @@ export default function Login() {
               <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
             ) : (
               <span className="flex items-center justify-center gap-2 tracking-wide">
-                Sign In 
+                {isSignUp ? 'Sign Up' : 'Sign In'} 
                 <ArrowRight size={18} className="group-hover:translate-x-1.5 transition-transform duration-300" />
               </span>
             )}
           </button>
         </form>
 
-        {/* QUICK LOGIN ROLE CARDS */}
-        <div className="space-y-4 pt-8 border-t border-premium-border mt-8">
-          <div className="flex items-center justify-center gap-1.5 text-[11px] font-bold text-text-secondary/70 tracking-widest uppercase">
-            <Sparkles size={14} className="text-yellow-500" />
-            <span>Quick Demo Access</span>
-          </div>
-          
-          <div className="grid grid-cols-2 gap-4">
-            <button
-              type="button"
-              onClick={() => handleDemoFill('admin')}
-              className="group flex flex-col items-start p-4 rounded-2xl border border-premium-border bg-slate-50/40 hover:bg-white hover:border-accent-blue/40 hover:shadow-premium transition-all duration-300 text-left relative overflow-hidden cursor-pointer"
-            >
-              <div className="absolute top-0 right-0 w-[40px] h-[40px] bg-accent-blue/5 rounded-bl-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
-              <div className="flex items-center gap-2 mb-2 w-full">
-                <div className="p-1.5 bg-accent-blue/10 rounded-lg text-accent-blue group-hover:scale-110 transition-transform duration-300">
-                  <ShieldCheck size={16} />
-                </div>
-                <span className="text-[13px] font-extrabold text-text-primary">Admin</span>
-                <span className="text-[9px] font-bold bg-accent-blue/10 text-accent-blue px-1.5 py-0.5 rounded-full ml-auto">
-                  Demo
-                </span>
-              </div>
-              <p className="text-[11px] text-text-secondary font-medium leading-relaxed">
-                Full configuration and scheduling access.
-              </p>
-            </button>
-            
-            <button
-              type="button"
-              onClick={() => handleDemoFill('faculty')}
-              className="group flex flex-col items-start p-4 rounded-2xl border border-premium-border bg-slate-50/40 hover:bg-white hover:border-grad-end/40 hover:shadow-premium transition-all duration-300 text-left relative overflow-hidden cursor-pointer"
-            >
-              <div className="absolute top-0 right-0 w-[40px] h-[40px] bg-grad-end/5 rounded-bl-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
-              <div className="flex items-center gap-2 mb-2 w-full">
-                <div className="p-1.5 bg-grad-end/10 rounded-lg text-grad-end group-hover:scale-110 transition-transform duration-300">
-                  <GraduationCap size={16} />
-                </div>
-                <span className="text-[13px] font-extrabold text-text-primary">Faculty</span>
-                <span className="text-[9px] font-bold bg-grad-end/10 text-grad-end px-1.5 py-0.5 rounded-full ml-auto">
-                  Demo
-                </span>
-              </div>
-              <p className="text-[11px] text-text-secondary font-medium leading-relaxed">
-                View schedules and manage faculty slots.
-              </p>
-            </button>
-          </div>
+        {/* TOGGLE MODE */}
+        <div className="text-center pt-4">
+          <button
+            type="button"
+            onClick={() => {
+              setIsSignUp(!isSignUp);
+              setErrorMsg('');
+            }}
+            className="text-[13px] font-bold text-accent-blue hover:text-grad-end transition-colors cursor-pointer"
+          >
+            {isSignUp ? 'Already have an account? Sign In' : "Sign Up Here"}
+          </button>
         </div>
+
+        {/* QUICK LOGIN ROLE CARDS (SIGN IN ONLY) */}
+        {!isSignUp && (
+          <div className="space-y-4 pt-8 border-t border-premium-border mt-8">
+            <div className="flex items-center justify-center gap-1.5 text-[11px] font-bold text-text-secondary/70 tracking-widest uppercase">
+              <Sparkles size={14} className="text-yellow-500" />
+              <span>Quick Demo Access</span>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <button
+                type="button"
+                onClick={() => handleDemoFill('admin')}
+                className="group flex flex-col items-start p-4 rounded-2xl border border-premium-border bg-slate-50/40 hover:bg-white hover:border-accent-blue/40 hover:shadow-premium transition-all duration-300 text-left relative overflow-hidden cursor-pointer"
+              >
+                <div className="absolute top-0 right-0 w-[40px] h-[40px] bg-accent-blue/5 rounded-bl-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
+                <div className="flex items-center gap-2 mb-2 w-full">
+                  <div className="p-1.5 bg-accent-blue/10 rounded-lg text-accent-blue group-hover:scale-110 transition-transform duration-300">
+                    <ShieldCheck size={16} />
+                  </div>
+                  <span className="text-[13px] font-extrabold text-text-primary">Admin</span>
+                  <span className="text-[9px] font-bold bg-accent-blue/10 text-accent-blue px-1.5 py-0.5 rounded-full ml-auto">
+                    Demo
+                  </span>
+                </div>
+                <p className="text-[11px] text-text-secondary font-medium leading-relaxed">
+                  Full configuration and scheduling access.
+                </p>
+              </button>
+              
+              <button
+                type="button"
+                onClick={() => handleDemoFill('faculty')}
+                className="group flex flex-col items-start p-4 rounded-2xl border border-premium-border bg-slate-50/40 hover:bg-white hover:border-grad-end/40 hover:shadow-premium transition-all duration-300 text-left relative overflow-hidden cursor-pointer"
+              >
+                <div className="absolute top-0 right-0 w-[40px] h-[40px] bg-grad-end/5 rounded-bl-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
+                <div className="flex items-center gap-2 mb-2 w-full">
+                  <div className="p-1.5 bg-grad-end/10 rounded-lg text-grad-end group-hover:scale-110 transition-transform duration-300">
+                    <GraduationCap size={16} />
+                  </div>
+                  <span className="text-[13px] font-extrabold text-text-primary">Faculty</span>
+                  <span className="text-[9px] font-bold bg-grad-end/10 text-grad-end px-1.5 py-0.5 rounded-full ml-auto">
+                    Demo
+                  </span>
+                </div>
+                <p className="text-[11px] text-text-secondary font-medium leading-relaxed">
+                  View schedules and manage faculty slots.
+                </p>
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* FOOTER */}
