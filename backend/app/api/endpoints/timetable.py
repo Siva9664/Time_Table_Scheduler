@@ -16,6 +16,7 @@ from ...services.document_constraints import (
     build_constraint_text_from_documents,
     extract_document_text,
 )
+from ...services.document_analysis import analyze_academic_documents
 from ...core.config import settings
 
 router = APIRouter(redirect_slashes=False)
@@ -456,6 +457,14 @@ async def generate_constraints_from_files(
         )
 
     context = _build_ai_constraint_context(db, periods_per_day)
+    document_analysis = analyze_academic_documents(
+        extracted_documents,
+        model=settings.DOCUMENT_ANALYSIS_MODEL,
+        api_base=settings.DOCUMENT_ANALYSIS_API_BASE,
+        api_key=settings.DOCUMENT_ANALYSIS_API_KEY,
+        timeout_seconds=settings.DOCUMENT_ANALYSIS_TIMEOUT_SECONDS,
+        max_chars=settings.DOCUMENT_ANALYSIS_MAX_CHARS,
+    )
     constraints_text, detected_constraints, conversion_warnings = build_constraint_text_from_documents(
         extracted_documents,
         context,
@@ -481,6 +490,12 @@ async def generate_constraints_from_files(
         "constraints_text": constraints_text,
         "custom_constraints": parse_result.get("constraints", []),
         "detected_constraints": detected_constraints,
+        "extracted_timetable": document_analysis.get("extracted_timetable", []),
+        "document_analysis": {
+            "source": document_analysis.get("source"),
+            "model": document_analysis.get("model"),
+            "warnings": document_analysis.get("warnings", []),
+        },
         "parse_diagnostics": {
             "corrections": parse_result.get("corrections", []),
             "warnings": parse_result.get("warnings", []),
@@ -496,7 +511,7 @@ async def generate_constraints_from_files(
             }
             for document in extracted_documents
         ],
-        "warnings": conversion_warnings + file_warnings,
+        "warnings": conversion_warnings + file_warnings + document_analysis.get("warnings", []),
         "extracted_text_preview": "\n\n".join(
             document.text[:2000] for document in extracted_documents if document.text.strip()
         )[:6000],

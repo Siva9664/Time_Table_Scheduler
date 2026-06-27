@@ -48,11 +48,26 @@ AI_MODEL=grok-1
 OPENAI_API_KEY=your-grok-api-key
 OPENAI_API_BASE=https://api.openai.com/v1
 OPENAI_TIMEOUT_SECONDS=60
+DOCUMENT_ANALYSIS_MODEL=qwen3:8b
+DOCUMENT_ANALYSIS_API_BASE=http://localhost:11434/v1
+DOCUMENT_ANALYSIS_API_KEY=local
 ```
 
 Set `USE_LOCAL_MONGODB=true` when you want to test with MongoDB Compass/local MongoDB. Set it back to `false` to use Atlas automatically.
 
 `AI_MODEL` should be set to a Grok/OpenAI-compatible model such as `grok-1`.
+
+#### Local Document Analysis
+
+Uploaded timetable, syllabus, and faculty-allocation PDFs are extracted locally first with PDF text extraction, `pdftotext` when available, and OCR for scans/images. For stricter JSON normalization, you can point the backend at any local OpenAI-compatible model server:
+
+```env
+DOCUMENT_ANALYSIS_MODEL=qwen3:8b
+DOCUMENT_ANALYSIS_API_BASE=http://localhost:11434/v1
+DOCUMENT_ANALYSIS_API_KEY=local
+```
+
+When `DOCUMENT_ANALYSIS_MODEL` is blank, uploads still work through the deterministic fallback parser. When it is set, the upload response includes a normalized `extracted_timetable` array plus the usual generated scheduler constraints.
 
 #### 3. Start the Backend
 

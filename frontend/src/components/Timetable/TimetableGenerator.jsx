@@ -180,6 +180,8 @@ export default function TimetableGenerator() {
   const autoAdj      = cu.auto_adjustments     || [];
   const constrWarn   = cu.constraint_warnings  || [];
   const substitutes  = cu.substitutes          || {};
+  const extractedRows = fileConstraintReport?.extracted_timetable || [];
+  const documentAnalysis = fileConstraintReport?.document_analysis || {};
 
   const hasDiagnostics = corrections.length || parseWarnings.length || unrecognized.length || autoAdj.length || constrWarn.length || Object.keys(substitutes).length > 0;
 
@@ -286,6 +288,11 @@ export default function TimetableGenerator() {
                 <div className="mt-3 rounded-lg border border-indigo-100 bg-white p-3 text-xs text-gray-600">
                   <div className="font-semibold text-indigo-700 mb-2">
                     {fileConstraintReport.custom_constraints?.length || 0} parsed constraints
+                    {` • ${extractedRows.length} extracted timetable rows`}
+                  </div>
+                  <div className="mb-2 text-gray-500">
+                    Analysis: {documentAnalysis.source || 'unknown'}
+                    {documentAnalysis.model ? ` (${documentAnalysis.model})` : ''}
                   </div>
                   <div className="space-y-1">
                     {fileConstraintReport.files?.map((file, index) => (
@@ -302,6 +309,25 @@ export default function TimetableGenerator() {
                         <li key={index}>{warning}</li>
                       ))}
                     </ul>
+                  )}
+                  {extractedRows.length > 0 && (
+                    <div className="mt-3 border-t border-indigo-50 pt-2">
+                      <div className="font-medium text-gray-700 mb-1">Extracted JSON preview</div>
+                      <div className="space-y-1">
+                        {extractedRows.slice(0, 3).map((row, index) => (
+                          <div key={index} className="rounded-md bg-gray-50 px-2 py-1">
+                            <span className="font-medium">
+                              {row.course_details?.subject_code || 'No code'}
+                            </span>
+                            {' — '}
+                            <span>{row.course_details?.subject_name || 'Unnamed row'}</span>
+                            {row.faculty_assignment?.full_name ? (
+                              <span className="text-gray-500"> • {row.faculty_assignment.full_name}</span>
+                            ) : null}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   )}
                 </div>
               )}

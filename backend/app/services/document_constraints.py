@@ -170,11 +170,10 @@ def _extract_pdf_text(content: bytes, ocr_max_pages: int) -> Tuple[str, List[str
         except Exception as exc:
             warnings.append(f"{module_name} could not read PDF text: {exc}")
 
-    if len(text.strip()) < 80:
-        cli_text = _pdftotext_cli(content)
-        if cli_text.strip():
-            text = cli_text
-            extractor = "pdftotext"
+    cli_text = _pdftotext_cli(content)
+    if cli_text.strip() and (len(text.strip()) < 80 or _looks_more_layout_preserving(cli_text, text)):
+        text = cli_text
+        extractor = "pdftotext"
 
     if len(text.strip()) < 80:
         ocr_text, ocr_warnings = _extract_pdf_ocr(content, ocr_max_pages)
@@ -322,6 +321,14 @@ def _pdftotext_cli(content: bytes) -> str:
     if not shutil.which("pdftotext"):
         return ""
     return _run_cli_with_temp(content, ".pdf", ["pdftotext", "-layout", "{input}", "-"])
+
+
+def _looks_more_layout_preserving(candidate: str, current: str) -> bool:
+    if len(candidate.strip()) < max(80, int(len(current.strip()) * 0.6)):
+        return False
+    candidate_score = sum(1 for line in candidate.splitlines() if "\t" in line or re.search(r"\S\s{2,}\S", line))
+    current_score = sum(1 for line in current.splitlines() if "\t" in line or re.search(r"\S\s{2,}\S", line))
+    return candidate_score > current_score
 
 
 def _libreoffice_convert_text(content: bytes, ext: str) -> str:
@@ -533,8 +540,8 @@ def _clean_text(text: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     lines = []
     for line in text.split("\n"):
-        line = re.sub(r"[ \f\v]+", " ", line).strip()
-        if line:
+        line = re.sub(r"[ \f\v]+", " ", line).strip(" ")
+        if line.strip():
             lines.append(line)
     return "\n".join(lines)
 

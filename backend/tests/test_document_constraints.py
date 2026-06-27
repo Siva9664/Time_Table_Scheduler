@@ -9,11 +9,14 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.api.endpoints import timetable as timetable_endpoint
+from app.core.config import settings
 from app.services.document_constraints import (
     ExtractedDocument,
     build_constraint_text_from_documents,
     extract_document_text,
 )
+from app.services import document_analysis
+from app.services.document_analysis import analyze_academic_documents, normalize_extracted_timetable
 
 
 class DocumentConstraintTests(unittest.TestCase):
@@ -71,6 +74,194 @@ class DocumentConstraintTests(unittest.TestCase):
         self.assertIn("For Class CSE A, Mathematics must be on Monday period 1.", constraints_text)
         self.assertIn("For Class CSE A, Physics must be on Monday period 2.", constraints_text)
 
+    def test_academic_analysis_expands_merged_context_rows(self):
+        document = ExtractedDocument(
+            filename="faculty-allocation.csv",
+            content_type="text/csv",
+            extractor="text",
+            text=(
+                "Subject Code,Subject Name,Type,L,T,P,C,Faculty,Designation\n"
+                "CS101,Data Structures,Blended,3,0,0,3,Dr Rao,Professor\n"
+                ",,Lab,0,0,2,1,,\n"
+                "PE201,Cloud Computing (Professional Elective I),Theory,3,0,0,3,Prof Meena,Assistant Professor\n"
+            ),
+        )
+
+        result = analyze_academic_documents([document])
+        rows = result["extracted_timetable"]
+
+        self.assertEqual(result["source"], "deterministic")
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[1]["course_details"]["subject_code"], "CS101")
+        self.assertEqual(rows[1]["course_details"]["subject_name"], "Data Structures")
+        self.assertEqual(rows[1]["course_details"]["type"], "Lab")
+        self.assertEqual(rows[1]["faculty_assignment"]["full_name"], "Dr Rao")
+        self.assertTrue(rows[1]["additional_metadata"]["is_ambiguous_or_split"])
+        self.assertTrue(rows[2]["course_details"]["is_elective"])
+        self.assertEqual(rows[2]["course_details"]["elective_group"], "Professional Elective I")
+
+    def test_csv_extraction_preserves_leading_blank_cells_for_merged_rows(self):
+        document = extract_document_text(
+            "faculty-allocation.csv",
+            (
+                "Subject Code,Subject Name,Type,L,T,P,C,Faculty,Designation\n"
+                "CS101,Data Structures,Blended,3,0,0,3,Dr Rao,Professor\n"
+                ",,Lab,0,0,2,1,,\n"
+            ).encode(),
+            "text/csv",
+        )
+
+        result = analyze_academic_documents([document])
+        rows = result["extracted_timetable"]
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[1]["course_details"]["subject_code"], "CS101")
+        self.assertEqual(rows[1]["course_details"]["subject_name"], "Data Structures")
+        self.assertEqual(rows[1]["course_details"]["type"], "Lab")
+        self.assertEqual(rows[1]["credit_structure"]["practical_hours_P"], 2)
+
+    def test_academic_analysis_drops_model_header_rows(self):
+        normalized, warnings = normalize_extracted_timetable({
+            "extracted_timetable": [
+                {
+                    "meta": {"row_index": 1, "raw_text_line": "Subject Code,Subject Name,Type,L,T,P,C,Faculty"},
+                    "course_details": {
+                        "subject_code": None,
+                        "subject_name": "Subject Code,Subject Name,Type,L,T,P,C,Faculty",
+                        "type": "Unknown",
+                        "is_elective": False,
+                        "elective_group": None,
+                    },
+                    "credit_structure": {
+                        "lecture_hours_L": 0,
+                        "tutorial_hours_T": 0,
+                        "practical_hours_P": 0,
+                        "total_credits_C": 0,
+                    },
+                    "faculty_assignment": {"full_name": None, "designation": None},
+                    "additional_metadata": {"remarks": None, "is_ambiguous_or_split": False},
+                },
+                {
+                    "meta": {"row_index": 2, "raw_text_line": "CS101,Data Structures,Theory,3,0,0,3,Dr Rao"},
+                    "course_details": {
+                        "subject_code": "CS101",
+                        "subject_name": "Data Structures",
+                        "type": "Theory",
+                        "is_elective": False,
+                        "elective_group": None,
+                    },
+                    "credit_structure": {
+                        "lecture_hours_L": 3,
+                        "tutorial_hours_T": 0,
+                        "practical_hours_P": 0,
+                        "total_credits_C": 3,
+                    },
+                    "faculty_assignment": {"full_name": "Dr Rao", "designation": None},
+                    "additional_metadata": {"remarks": None, "is_ambiguous_or_split": False},
+                },
+            ]
+        })
+
+        self.assertFalse(warnings)
+        self.assertEqual(len(normalized), 1)
+        self.assertEqual(normalized[0]["course_details"]["subject_code"], "CS101")
+
+    def test_academic_analysis_inherits_generic_split_component_names(self):
+        normalized, warnings = normalize_extracted_timetable({
+            "extracted_timetable": [
+                {
+                    "meta": {"row_index": 1, "raw_text_line": "CS101,Data Structures,Blended,3,0,0,3,Dr Rao"},
+                    "course_details": {
+                        "subject_code": "CS101",
+                        "subject_name": "Data Structures",
+                        "type": "Blended",
+                        "is_elective": False,
+                        "elective_group": None,
+                    },
+                    "credit_structure": {
+                        "lecture_hours_L": 3,
+                        "tutorial_hours_T": 0,
+                        "practical_hours_P": 0,
+                        "total_credits_C": 3,
+                    },
+                    "faculty_assignment": {"full_name": "Dr Rao", "designation": None},
+                    "additional_metadata": {"remarks": None, "is_ambiguous_or_split": False},
+                },
+                {
+                    "meta": {"row_index": 2, "raw_text_line": ",,Lab,0,0,2,1,,"},
+                    "course_details": {
+                        "subject_code": None,
+                        "subject_name": "Lab",
+                        "type": "Lab",
+                        "is_elective": False,
+                        "elective_group": None,
+                    },
+                    "credit_structure": {
+                        "lecture_hours_L": 0,
+                        "tutorial_hours_T": 0,
+                        "practical_hours_P": 2,
+                        "total_credits_C": 1,
+                    },
+                    "faculty_assignment": {"full_name": None, "designation": None},
+                    "additional_metadata": {"remarks": None, "is_ambiguous_or_split": False},
+                },
+            ]
+        })
+
+        self.assertFalse(warnings)
+        self.assertEqual(normalized[1]["course_details"]["subject_code"], "CS101")
+        self.assertEqual(normalized[1]["course_details"]["subject_name"], "Data Structures")
+        self.assertEqual(normalized[1]["course_details"]["type"], "Lab")
+        self.assertTrue(normalized[1]["additional_metadata"]["is_ambiguous_or_split"])
+
+    def test_academic_analysis_prefers_more_structured_deterministic_rows(self):
+        document = ExtractedDocument(
+            filename="mixed.csv",
+            content_type="text/csv",
+            extractor="text",
+            text=(
+                "Class CSE A\n"
+                "Day,Period 1,Period 2\n"
+                "Monday,Mathematics,Physics\n"
+                "Subject Code,Subject Name,Type,L,T,P,C,Faculty,Designation\n"
+                "CS101,Data Structures,Blended,3,0,0,3,Dr Rao,Professor\n"
+                ",,Lab,0,0,2,1,,\n"
+            ),
+        )
+
+        original_call = document_analysis._call_local_model
+        document_analysis._call_local_model = lambda *args, **kwargs: json.dumps({
+            "extracted_timetable": [
+                {
+                    "meta": {"row_index": 1, "raw_text_line": "Class CSE A"},
+                    "course_details": {
+                        "subject_code": None,
+                        "subject_name": "Class CSE A",
+                        "type": "Unknown",
+                        "is_elective": False,
+                        "elective_group": None,
+                    },
+                    "credit_structure": {
+                        "lecture_hours_L": 0,
+                        "tutorial_hours_T": 0,
+                        "practical_hours_P": 0,
+                        "total_credits_C": 0,
+                    },
+                    "faculty_assignment": {"full_name": None, "designation": None},
+                    "additional_metadata": {"remarks": None, "is_ambiguous_or_split": False},
+                }
+            ]
+        })
+        try:
+            result = analyze_academic_documents([document], model="qwen3:8b")
+        finally:
+            document_analysis._call_local_model = original_call
+
+        self.assertEqual(result["source"], "deterministic")
+        self.assertIn("less structured", " ".join(result["warnings"]))
+        self.assertEqual(len(result["extracted_timetable"]), 2)
+        self.assertEqual(result["extracted_timetable"][0]["course_details"]["subject_code"], "CS101")
+
 
 class FakeCollection:
     def __init__(self, docs):
@@ -114,17 +305,24 @@ class ConstraintUploadEndpointTests(unittest.TestCase):
             b"Class CSE A\nDay,Period 1,Period 2\nMonday,Mathematics,Physics\n",
         )
 
-        payload = asyncio.run(
-            timetable_endpoint.generate_constraints_from_files(
-                files=[upload],
-                periods_per_day=3,
-                db=FakeDB(),
-                current_user={"id": "admin"},
+        previous_model = settings.DOCUMENT_ANALYSIS_MODEL
+        settings.DOCUMENT_ANALYSIS_MODEL = None
+        try:
+            payload = asyncio.run(
+                timetable_endpoint.generate_constraints_from_files(
+                    files=[upload],
+                    periods_per_day=3,
+                    db=FakeDB(),
+                    current_user={"id": "admin"},
+                )
             )
-        )
+        finally:
+            settings.DOCUMENT_ANALYSIS_MODEL = previous_model
 
         self.assertIn("Mathematics must be on Monday period 1", payload["constraints_text"])
         self.assertGreaterEqual(len(payload["custom_constraints"]), 2)
+        self.assertIn("extracted_timetable", payload)
+        self.assertIn("document_analysis", payload)
         self.assertEqual(payload["files"][0]["extractor"], "text")
 
 

@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     DOCUMENT_UPLOAD_MAX_FILE_BYTES: int = 15 * 1024 * 1024
     DOCUMENT_TEXT_MAX_CHARS: int = 200_000
     DOCUMENT_OCR_MAX_PAGES: int = 6
+    DOCUMENT_ANALYSIS_MODEL: Optional[str] = None
+    DOCUMENT_ANALYSIS_API_BASE: str = "http://localhost:11434/v1"
+    DOCUMENT_ANALYSIS_API_KEY: Optional[str] = "local"
+    DOCUMENT_ANALYSIS_TIMEOUT_SECONDS: int = 120
+    DOCUMENT_ANALYSIS_MAX_CHARS: int = 60_000
 
     @property
     def origins_list(self) -> List[str]:

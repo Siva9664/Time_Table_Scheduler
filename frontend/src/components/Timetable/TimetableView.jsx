@@ -5,6 +5,23 @@ import ConfirmationModal from '../Layout/ConfirmationModal';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
 
+const addCanvasToSinglePdfPage = (pdf, canvas, { pageWidth, pageHeight, margin }, hasRenderedPage) => {
+  const availableWidth = pageWidth - (margin * 2);
+  const availableHeight = pageHeight - (margin * 2);
+  const pdfScale = Math.min(availableWidth / canvas.width, availableHeight / canvas.height);
+  const imgWidth = canvas.width * pdfScale;
+  const imgHeight = canvas.height * pdfScale;
+  const x = margin + ((availableWidth - imgWidth) / 2);
+  const y = margin + ((availableHeight - imgHeight) / 2);
+
+  if (hasRenderedPage) pdf.addPage();
+
+  const imgData = canvas.toDataURL('image/jpeg', 0.98);
+  pdf.addImage(imgData, 'JPEG', x, y, imgWidth, imgHeight);
+
+  return true;
+};
+
 export default function TimetableView() {
   const [timetables, setTimetables] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -70,7 +87,6 @@ export default function TimetableView() {
     const pageWidth = pdf.internal.pageSize.getWidth();
     const pageHeight = pdf.internal.pageSize.getHeight();
     const margin = 20;
-    const availableWidth = pageWidth - (margin * 2);
 
     // Create a hidden container in the DOM
     const wrapper = document.createElement('div');
@@ -80,6 +96,8 @@ export default function TimetableView() {
     wrapper.style.width = '1200px';
     wrapper.style.display = 'inline-block';
     wrapper.style.padding = '20px';
+    wrapper.style.boxSizing = 'border-box';
+    wrapper.style.overflow = 'visible';
     wrapper.style.fontFamily = "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
     wrapper.style.color = '#111827';
     wrapper.style.background = '#ffffff';
@@ -211,25 +229,33 @@ export default function TimetableView() {
 
       // 3. Render each page sequentially
       console.log("Total pages to render:", pagesHTML.length);
+      let hasRenderedPage = false;
       for (let i = 0; i < pagesHTML.length; i++) {
         console.log(`Rendering page ${i + 1}/${pagesHTML.length}...`);
         wrapper.innerHTML = pagesHTML[i];
-        
+
+        const contentWidth = Math.ceil(wrapper.scrollWidth);
+        const contentHeight = Math.ceil(wrapper.scrollHeight);
         const canvas = await html2canvas(wrapper, { 
           scale: 2, 
           useCORS: true,
           logging: false,
-          windowWidth: wrapper.scrollWidth,
-          width: wrapper.scrollWidth
+          backgroundColor: '#ffffff',
+          windowWidth: contentWidth,
+          windowHeight: contentHeight,
+          width: contentWidth,
+          height: contentHeight,
+          scrollX: 0,
+          scrollY: 0
         });
         console.log(`Finished canvas for page ${i + 1}/${pagesHTML.length}. Converting to image...`);
-        
-        const imgData = canvas.toDataURL('image/jpeg', 0.98);
-        const imgWidth = availableWidth;
-        const imgHeight = (canvas.height * availableWidth) / canvas.width;
 
-        if (i > 0) pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', margin, margin, imgWidth, imgHeight);
+        hasRenderedPage = addCanvasToSinglePdfPage(
+          pdf,
+          canvas,
+          { pageWidth, pageHeight, margin },
+          hasRenderedPage
+        );
         console.log(`Page ${i + 1}/${pagesHTML.length} successfully added to PDF.`);
       }
       console.log("Saving PDF...");
