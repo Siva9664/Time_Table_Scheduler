@@ -528,10 +528,10 @@ def generate_timetable(request: TimetableGenerateRequest, db: Database = Depends
             context = _build_ai_constraint_context(db, request.periods_per_day)
 
             parser = AIConstraintParser(
-                model=settings.AI_MODEL,
+                model=settings.active_ai_model,
                 timeout_seconds=settings.OPENAI_TIMEOUT_SECONDS,
-                api_key=settings.OPENAI_API_KEY,
-                api_base=settings.OPENAI_API_BASE,
+                api_key=settings.active_ai_api_key,
+                api_base=settings.active_ai_api_base,
                 context=context,
             )
             parse_result = parser.parse_constraints_with_diagnostics(request.constraints_text)

@@ -15,14 +15,17 @@ import {
   ChevronRight,
   User,
   Download,
-  Upload
+  Upload,
+  FileText
 } from 'lucide-react';
+import DocumentExtractorModal from './DocumentExtractorModal';
 
 export default function Dashboard() {
   const [stats, setStats] = useState({ departments: 0, classes: 0, faculty: 0, timetables: 0 });
   const [loading, setLoading] = useState(true);
   const [bulkImporting, setBulkImporting] = useState(false);
   const [bulkImportResults, setBulkImportResults] = useState([]);
+  const [documentExtractorOpen, setDocumentExtractorOpen] = useState(false);
   const folderInputRef = useRef(null);
   const navigate = useNavigate();
   const { showToast } = useToast();
@@ -194,6 +197,7 @@ export default function Dashboard() {
                 disabled={bulkImporting}
               />
               <ActionButton icon={Download} label="Download Templates" color="bg-purple-600" onClick={() => { window.location.href = '/api/imports/templates'; }} />
+              <ActionButton icon={FileText} label="Extract & Fill Data" color="bg-violet-600" onClick={() => setDocumentExtractorOpen(true)} />
               <ActionButton icon={Plus} label="Generate New" color="bg-slate-600" onClick={() => navigate('/generate')} />
             </>
           ) : (
@@ -256,6 +260,14 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+      <DocumentExtractorModal
+        isOpen={documentExtractorOpen}
+        onClose={() => setDocumentExtractorOpen(false)}
+        onImportSuccess={async () => {
+          clearApiCache();
+          await loadStats();
+        }}
+      />
     </div>
   );
 }

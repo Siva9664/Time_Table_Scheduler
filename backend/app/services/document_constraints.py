@@ -295,26 +295,96 @@ def _extract_zip_text(content: bytes, *, max_chars: int, ocr_max_pages: int) -> 
 
 
 def _extract_image_ocr(content: bytes) -> Tuple[str, List[str]]:
+    warnings = []
+    
+    # Try PaddleOCR first
+    try:
+        from paddleocr import PaddleOCR
+        import numpy as np
+        from PIL import Image
+        
+        # Initialize PaddleOCR (cached as an attribute on the function to avoid reloading every time)
+        if not hasattr(_extract_image_ocr, "_paddle_ocr"):
+            # Set show_log=False to avoid cluttering the console
+            _extract_image_ocr._paddle_ocr = PaddleOCR(use_angle_cls=True, lang='en', show_log=False)
+            
+        image = Image.open(io.BytesIO(content)).convert('RGB')
+        img_np = np.array(image)
+        
+        ocr_result = _extract_image_ocr._paddle_ocr.ocr(img_np, cls=True)
+        text_lines = []
+        if ocr_result:
+            for line in ocr_result:
+                if line:
+                    for word_info in line:
+                        text_lines.append(word_info[1][0])
+                        
+        extracted_text = "\n".join(text_lines)
+        if extracted_text.strip():
+            return extracted_text, []
+            
+    except Exception as paddle_exc:
+        warnings.append(f"PaddleOCR failed: {paddle_exc}. Falling back to Tesseract.")
+        
+    # Fallback to Tesseract
     try:
         from PIL import Image
         import pytesseract
 
         image = Image.open(io.BytesIO(content))
-        return pytesseract.image_to_string(image), []
+        return pytesseract.image_to_string(image), warnings
     except Exception as exc:
-        return "", [f"Local image OCR is unavailable or failed: {exc}"]
+        warnings.append(f"Tesseract OCR failed: {exc}")
+        return "", warnings
 
 
 def _extract_pdf_ocr(content: bytes, max_pages: int) -> Tuple[str, List[str]]:
+    warnings = []
+    
+    # Try converting pages
     try:
         from pdf2image import convert_from_bytes
-        import pytesseract
-
         pages = convert_from_bytes(content, first_page=1, last_page=max(1, max_pages))
-        text = "\n".join(pytesseract.image_to_string(page) for page in pages)
-        return text, []
     except Exception as exc:
-        return "", [f"Local PDF OCR is unavailable or failed: {exc}"]
+        return "", [f"Local PDF OCR page conversion failed: {exc}"]
+        
+    # Process pages using PaddleOCR or Tesseract
+    texts = []
+    for page in pages:
+        page_text = ""
+        # Try PaddleOCR
+        try:
+            from paddleocr import PaddleOCR
+            import numpy as np
+            
+            if not hasattr(_extract_pdf_ocr, "_paddle_ocr"):
+                _extract_pdf_ocr._paddle_ocr = PaddleOCR(use_angle_cls=True, lang='en', show_log=False)
+                
+            img_np = np.array(page.convert('RGB'))
+            ocr_result = _extract_pdf_ocr._paddle_ocr.ocr(img_np, cls=True)
+            text_lines = []
+            if ocr_result:
+                for line in ocr_result:
+                    if line:
+                        for word_info in line:
+                            text_lines.append(word_info[1][0])
+            page_text = "\n".join(text_lines)
+        except Exception as paddle_exc:
+            if f"PaddleOCR page extraction failed" not in "".join(warnings):
+                warnings.append(f"PaddleOCR page extraction failed: {paddle_exc}. Falling back to Tesseract.")
+                
+        # Tesseract fallback for this page if PaddleOCR failed or was unavailable
+        if not page_text.strip():
+            try:
+                import pytesseract
+                page_text = pytesseract.image_to_string(page)
+            except Exception as tess_exc:
+                warnings.append(f"Tesseract OCR failed on page: {tess_exc}")
+                
+        if page_text.strip():
+            texts.append(page_text)
+            
+    return "\n\n".join(texts), warnings
 
 
 def _pdftotext_cli(content: bytes) -> str:

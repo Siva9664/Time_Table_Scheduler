@@ -6,6 +6,8 @@ import io
 import zipfile
 import json
 import re
+import urllib.request
+import urllib.error
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime, timezone
 
@@ -895,3 +897,562 @@ async def upload_csv_folder(
         'missing': missing,
         'results': results
     })
+
+
+# ── Document Entity Extraction and Filling ──────────────────────────────────────
+
+ACADEMIC_EXTRACTOR_SYSTEM_PROMPT = """You are a STRICT academic data extractor.
+
+## ABSOLUTE RULES — NEVER VIOLATE THESE
+
+1. **EXTRACT ONLY.** You may ONLY output data that is EXPLICITLY and LITERALLY present in the provided document text/image.
+2. **NO HALLUCINATION.** Do NOT invent, guess, assume, infer, or generate ANY data that is not directly written in the document. This includes names, codes, emails, times, numbers, or any other value.
+3. **NO EXAMPLES.** Do NOT use placeholder values such as "faculty@university.edu", "DEPT_CODE", "SUBJ101", "Room 101", or any example-like strings. If the real value is not in the document, use "" (empty string) or null.
+4. **NO MOCK DATA.** Do NOT fill in "reasonable" defaults or "typical" values. Leave every field empty ("") if it cannot be found verbatim in the source document.
+5. **MISSING = EMPTY.** If a field (email, code, section, department, batch, room, etc.) is not explicitly stated in the document, set it to "" or null. Do not construct or fabricate it.
+
+## Task
+
+Analyze the provided document and extract ONLY entities that are explicitly mentioned. Map them into the JSON structure below.
+
+## Output Format
+
+Return ONLY a single raw JSON object — no markdown fences, no reasoning text, no notes, no explanation.
+
+{
+  "departments": [
+    {"name": "<exact name from doc>", "code": "<exact code from doc or ''>"}
+  ],
+  "batches": [
+    {"name": "<exact name from doc>", "start_time": "<HH:MM or ''>", "end_time": "<HH:MM or ''>", "period_duration": <number or 60>}
+  ],
+  "classes": [
+    {"name": "<exact name from doc>", "section": "<exact section from doc or ''>", "department_code": "<exact code from doc or ''>", "batch_name": "<exact name from doc or ''>", "semester": <number or null>, "student_count": <number or 0>}
+  ],
+  "rooms": [
+    {"name": "<exact name from doc>", "code": "<exact code from doc or ''>", "room_type": "lecture", "capacity": <number or 0>, "department_code": "<exact code from doc or ''>"}
+  ],
+  "subjects": [
+    {"name": "<exact name from doc>", "code": "<exact code from doc or ''>", "hours_per_week": <number or 0>, "requires_lab": false, "department_codes": "<exact code from doc or ''>", "batch_name": "<exact name from doc or ''>"}
+  ],
+  "faculty": [
+    {"name": "<exact name from doc>", "email": "<exact email from doc or ''>", "department_code": "<exact code from doc or ''>"}
+  ],
+  "mappings": [
+    {"subject_code": "<exact code from doc or ''>", "class_name": "<exact name from doc>", "class_section": "<exact section from doc or ''>", "faculty_email": "<exact email from doc or ''>", "room_code": "<exact code from doc or ''>"}
+  ]
+}
+
+## Additional Rules
+
+- room_type must be one of: ["lecture", "lab", "seminar"]. Default to "lecture" only if the room is mentioned but its type is not specified.
+- If the document contains NO information for a category (e.g. no rooms mentioned), return an empty list [] for that key.
+- Do NOT output any markdown code blocks, reasoning, commentary, or extra text. Output ONLY the raw JSON object.
+- REMEMBER: Every single value in your output MUST come directly from the document. If you are not 100% sure a value appears in the document, use "" or null instead.
+"""
+
+
+def _split_text_into_chunks(text: str, max_chars: int = 8000) -> list:
+    """Split document text into chunks, preferring to split on 'Sheet:' boundaries.
+
+    For multi-sheet Excel files, the text contains lines like 'Sheet: SheetName'.
+    We group text by sheets and create chunks that fit within max_chars,
+    combining small sheets together and splitting large sheets if needed.
+    """
+    import re
+    # Split on 'Sheet:' headers (produced by the xlsx extractor)
+    sheet_pattern = re.compile(r'^Sheet:\s+', re.MULTILINE)
+    parts = sheet_pattern.split(text)
+    headers = sheet_pattern.findall(text)
+
+    # If no sheet headers found, just split the text by size
+    if len(parts) <= 1:
+        chunks = []
+        for i in range(0, len(text), max_chars):
+            chunks.append(text[i:i + max_chars])
+        return chunks if chunks else [text]
+
+    # Rebuild sheet sections: first part is pre-header content, rest are sheets
+    sections = []
+    if parts[0].strip():
+        sections.append(parts[0].strip())
+    for i, part in enumerate(parts[1:], 0):
+        header = headers[i] if i < len(headers) else "Sheet: "
+        sections.append(f"{header}{part}".strip())
+
+    # Group sections into chunks that fit within max_chars
+    chunks = []
+    current_chunk = ""
+    for section in sections:
+        if not section.strip():
+            continue
+        # If adding this section would exceed the limit
+        if current_chunk and len(current_chunk) + len(section) + 2 > max_chars:
+            chunks.append(current_chunk)
+            # If the section itself is too large, split it
+            if len(section) > max_chars:
+                for i in range(0, len(section), max_chars):
+                    chunks.append(section[i:i + max_chars])
+                current_chunk = ""
+            else:
+                current_chunk = section
+        else:
+            current_chunk = f"{current_chunk}\n\n{section}".strip() if current_chunk else section
+
+    if current_chunk.strip():
+        chunks.append(current_chunk)
+
+    return chunks if chunks else [text[:max_chars]]
+
+
+def _dedupe_extracted_list(items: list) -> list:
+    """Remove duplicate dicts from a list, preserving order.
+
+    Uses a JSON serialization of sorted keys for comparison.
+    """
+    import json
+    seen = set()
+    unique = []
+    for item in items:
+        if isinstance(item, dict):
+            # Normalize: lowercase name/code fields for comparison
+            key_parts = []
+            for k in sorted(item.keys()):
+                v = item.get(k, "")
+                if isinstance(v, str):
+                    key_parts.append(f"{k}={v.strip().lower()}")
+                else:
+                    key_parts.append(f"{k}={v}")
+            key = "|".join(key_parts)
+        else:
+            key = json.dumps(item, sort_keys=True)
+        if key not in seen:
+            seen.add(key)
+            unique.append(item)
+    return unique
+
+
+@router.post('/extract-academic-data')
+async def extract_academic_data(
+    file: UploadFile = File(...),
+    use_gemini: bool = Form(False),
+    gemini_api_key: Optional[str] = Form(None),
+    db=Depends(get_tenant_db),
+    _current_user: dict = Depends(get_admin_user),
+):
+    """
+    Extract academic data from a document (image/PDF) using OCR and Ollama concurrently.
+    Splits multi-sheet Excel files into chunks and processes each separately.
+    Returns a stream of NDJSON progress updates and the final merged structured entities.
+    """
+    from ...core.config import settings
+    from ...services.document_constraints import extract_document_text
+    import urllib.request
+    import json
+    import asyncio
+    import base64
+    import io
+    import threading
+    from typing import Optional
+
+    content = await file.read()
+    if len(content) > settings.DOCUMENT_UPLOAD_MAX_FILE_BYTES:
+        limit_mb = settings.DOCUMENT_UPLOAD_MAX_FILE_BYTES // (1024 * 1024)
+        raise HTTPException(
+            status_code=413,
+            detail=f"{file.filename or 'Uploaded file'} is larger than the {limit_mb} MB limit.",
+        )
+
+    async def generate_progress():
+        main_queue = asyncio.Queue()
+        active_tasks = 0
+
+        # Try to extract images for Qwen Vision
+        ext = (file.filename or "").lower().split(".")[-1]
+        images_base64 = []
+        if ext in {'png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif', 'tif', 'tiff'}:
+            images_base64.append(base64.b64encode(content).decode('utf-8'))
+        elif ext == 'pdf':
+            try:
+                from pdf2image import convert_from_bytes
+                pages = await asyncio.to_thread(convert_from_bytes, content, first_page=1, last_page=settings.DOCUMENT_OCR_MAX_PAGES)
+                for page in pages:
+                    buffer = io.BytesIO()
+                    page.save(buffer, format="JPEG")
+                    images_base64.append(base64.b64encode(buffer.getvalue()).decode('utf-8'))
+            except Exception as e:
+                await main_queue.put(("data", json.dumps({"status": "log", "text": f"\n[System] PDF to image conversion failed (will fallback to text): {e}\n"}) + "\n"))
+
+        doc_text_result = {"text": "", "warnings": [], "extractor": "none"}
+        extracted_data_result = {
+            "departments": [], "batches": [], "classes": [], "rooms": [],
+            "subjects": [], "faculty": [], "mappings": []
+        }
+        
+        async def ocr_task():
+            try:
+                await main_queue.put(("data", json.dumps({"status": "progress", "progress": 10, "message": "[PaddleOCR] Running extraction..."}) + "\n"))
+                doc = await asyncio.to_thread(
+                    extract_document_text,
+                    file.filename or "uploaded-file",
+                    content,
+                    file.content_type,
+                    max_chars=settings.DOCUMENT_TEXT_MAX_CHARS,
+                    ocr_max_pages=settings.DOCUMENT_OCR_MAX_PAGES,
+                )
+                doc_text_result["text"] = doc.text
+                doc_text_result["warnings"] = list(doc.warnings)
+                doc_text_result["extractor"] = doc.extractor
+                await main_queue.put(("data", json.dumps({"status": "log", "text": f"\n[PaddleOCR] Extracted {len(doc.text)} characters.\n"}) + "\n"))
+            except Exception as e:
+                await main_queue.put(("data", json.dumps({"status": "log", "text": f"\n[PaddleOCR] Failed: {e}\n"}) + "\n"))
+            finally:
+                # Mark done, in case Qwen is waiting for text
+                if not doc_text_result["text"]:
+                    doc_text_result["text"] = " " # unblock qwen
+                await main_queue.put(("task_done", "ocr"))
+
+        async def qwen_task(images, wait_for_text=False):
+            try:
+                active_key = gemini_api_key or settings.GEMINI_API_KEY
+                if use_gemini:
+                    if not active_key:
+                        raise ValueError("Gemini API key is not configured. Please set GEMINI_API_KEY in the backend .env file.")
+                    model_name = "gemini-2.5-flash"
+                    api_base = "https://generativelanguage.googleapis.com/v1beta/openai"
+                else:
+                    model_name = settings.DOCUMENT_ANALYSIS_MODEL or "qwen2.5vl"
+                    api_base = settings.DOCUMENT_ANALYSIS_API_BASE.rstrip("/")
+                    if api_base.endswith("/v1"):
+                        api_base = api_base[:-3]
+                
+                timeout = max(settings.DOCUMENT_ANALYSIS_TIMEOUT_SECONDS, 900)
+                
+                chunks = []
+                is_image = False
+                if images:
+                    chunks = images
+                    is_image = True
+                else:
+                    if wait_for_text:
+                        # Wait for OCR task to finish to get the text
+                        while not doc_text_result["text"]:
+                            await asyncio.sleep(0.5)
+                        chunks = _split_text_into_chunks(doc_text_result["text"], 4000)
+                    else:
+                        chunks = _split_text_into_chunks(doc_text_result["text"], 4000)
+
+                if not chunks or (not is_image and not chunks[0].strip()):
+                    await main_queue.put(("data", json.dumps({"status": "log", "text": f"\n[{'Gemini' if use_gemini else 'Qwen'}] No data to process.\n"}) + "\n"))
+                    return
+
+                for i, chunk in enumerate(chunks):
+                    progress_pct = 30 + int(60 * (i / len(chunks)))
+                    await main_queue.put(("data", json.dumps({"status": "progress", "progress": progress_pct, "message": f"[{'Gemini' if use_gemini else 'Qwen'}] Processing part {i+1}/{len(chunks)}..."}) + "\n"))
+                    
+                    messages = [{"role": "system", "content": ACADEMIC_EXTRACTOR_SYSTEM_PROMPT}]
+                    if is_image:
+                        if use_gemini:
+                            messages.append({
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": "Extract ONLY the academic entities that are explicitly and literally visible in this document image. Do NOT invent, guess, or hallucinate any values. Any field not clearly present in the image must be set to \"\" or null. Return ONLY a valid JSON object with no extra text."},
+                                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{chunk}"}}
+                                ]
+                            })
+                        else:
+                            messages.append({
+                                "role": "user",
+                                "content": "Extract ONLY the academic entities that are explicitly and literally visible in this document image. Do NOT invent, guess, or hallucinate any values. Any field not clearly present in the image must be set to \"\" or null. Return ONLY a valid JSON object with no extra text.",
+                                "images": [chunk]
+                            })
+                    else:
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                "Extract ONLY the academic entities that are explicitly and literally present in the following document text. "
+                                "Do NOT invent, guess, infer, or hallucinate any values. "
+                                "If a field (email, code, section, department, batch, room, etc.) is not clearly stated in the text, set it to \"\" or null. "
+                                "Return ONLY a valid JSON object with no extra text.\n\n"
+                                f"{chunk}"
+                            )
+                        })
+
+                    if use_gemini:
+                        payload = {
+                            "model": model_name,
+                            "stream": True,
+                            "temperature": 0.0,
+                            "max_tokens": 8192,
+                            "response_format": {"type": "json_object"},
+                            "messages": messages
+                        }
+                        endpoint = f"{api_base}/chat/completions"
+                    else:
+                        payload = {
+                            "model": model_name,
+                            "stream": True,
+                            "options": {"temperature": 0.0, "num_predict": 4096, "num_ctx": 8192},
+                            "messages": messages
+                        }
+                        endpoint = f"{api_base}/api/chat"
+
+                    req_data = json.dumps(payload).encode("utf-8")
+                    req = urllib.request.Request(
+                        endpoint,
+                        data=req_data,
+                        headers={"Content-Type": "application/json"},
+                        method="POST"
+                    )
+                    if use_gemini and active_key:
+                        req.add_header("Authorization", f"Bearer {active_key}")
+
+                    stream_queue = asyncio.Queue()
+                    loop = asyncio.get_running_loop()
+                    def run_sync_stream():
+                        try:
+                            with urllib.request.urlopen(req, timeout=timeout) as response:
+                                for line in response:
+                                    if line.strip():
+                                        asyncio.run_coroutine_threadsafe(stream_queue.put(("stream_data", line)), loop)
+                            asyncio.run_coroutine_threadsafe(stream_queue.put(("stream_done", None)), loop)
+                        except Exception as e:
+                            asyncio.run_coroutine_threadsafe(stream_queue.put(("stream_error", e)), loop)
+
+                    threading.Thread(target=run_sync_stream, daemon=True).start()
+                    
+                    content_str = ""
+                    while True:
+                        msg_type, data = await stream_queue.get()
+                        if msg_type == "stream_done":
+                            break
+                        elif msg_type == "stream_error":
+                            raise data
+                        elif msg_type == "stream_data":
+                            try:
+                                token = ""
+                                data_str = data.decode("utf-8").strip() if isinstance(data, bytes) else data.strip()
+                                if not data_str:
+                                    continue
+                                
+                                if use_gemini:
+                                    if data_str.startswith("data: "):
+                                        data_str = data_str[6:]
+                                    if data_str == "[DONE]":
+                                        continue
+                                    
+                                    chunk_obj = json.loads(data_str)
+                                    choices = chunk_obj.get("choices", [])
+                                    if choices:
+                                        delta = choices[0].get("delta", {})
+                                        token = delta.get("content", "")
+                                else:
+                                    chunk_obj = json.loads(data_str)
+                                    token = chunk_obj.get("message", {}).get("content", "")
+                                
+                                if token:
+                                    content_str += token
+                                    await main_queue.put(("data", json.dumps({"status": "log", "text": token}) + "\n"))
+                            except Exception as e:
+                                pass
+                                
+                    content_str = content_str.strip()
+                    # Strip Gemini thinking/reasoning tokens (gemini-2.5-flash emits <think>...</think>)
+                    import re as _re
+                    content_str = _re.sub(r'<think>.*?</think>', '', content_str, flags=_re.DOTALL).strip()
+                    # Strip all markdown code fences (```json ... ``` or ``` ... ```)
+                    content_str = _re.sub(r'^```(?:json)?\s*', '', content_str).strip()
+                    content_str = _re.sub(r'\s*```$', '', content_str).strip()
+
+                    try:
+                        parsed = json.loads(content_str)
+                    except json.JSONDecodeError:
+                        # Try to extract the first complete JSON object from the response
+                        json_start = content_str.find('{')
+                        json_end = content_str.rfind('}')
+                        if json_start != -1 and json_end != -1:
+                            try:
+                                parsed = json.loads(content_str[json_start:json_end + 1])
+                            except json.JSONDecodeError as inner_e:
+                                doc_text_result["warnings"].append(
+                                    f"Chunk {i+1}: Model returned invalid JSON and could not be parsed ({inner_e}). "
+                                    "Try again or use a different file format."
+                                )
+                                continue
+                        else:
+                            doc_text_result["warnings"].append(f"Chunk {i+1}: Could not parse JSON from model response.")
+                            continue
+
+                    for key in extracted_data_result.keys():
+                        if key in parsed and isinstance(parsed[key], list):
+                            extracted_data_result[key].extend(parsed[key])
+                        elif key == "faculty" and "faculties" in parsed and isinstance(parsed["faculties"], list):
+                            extracted_data_result["faculty"].extend(parsed["faculties"])
+                            
+            except urllib.error.HTTPError as http_err:
+                error_body = http_err.read().decode("utf-8", errors="replace") if hasattr(http_err, 'read') else str(http_err)
+                target = "Gemini" if use_gemini else "Qwen"
+                await main_queue.put(("data", json.dumps({"status": "error", "error": f"[{target}] HTTP {http_err.code}: {error_body[:500]}"}) + "\n"))
+            except urllib.error.URLError as url_err:
+                target = "Gemini API" if use_gemini else "local Ollama"
+                prefix = "Gemini" if use_gemini else "Qwen"
+                await main_queue.put(("data", json.dumps({"status": "error", "error": f"[{prefix}] Cannot connect to {target} ({api_base}). Reason: {url_err.reason}"}) + "\n"))
+            except Exception as e:
+                prefix = "Gemini" if use_gemini else "Qwen"
+                await main_queue.put(("data", json.dumps({"status": "error", "error": f"[{prefix}] Error: {e}"}) + "\n"))
+            finally:
+                await main_queue.put(("task_done", "qwen"))
+
+        try:
+            await main_queue.put(("data", json.dumps({"status": "progress", "progress": 5, "message": f"Processing file: {file.filename} ({len(content)} bytes)"}) + "\n"))
+            
+            # Start Tasks
+            asyncio.create_task(ocr_task())
+            active_tasks += 1
+            
+            if images_base64:
+                asyncio.create_task(qwen_task(images_base64, wait_for_text=False))
+                active_tasks += 1
+            else:
+                asyncio.create_task(qwen_task([], wait_for_text=True))
+                active_tasks += 1
+                
+            # Consume from main_queue
+            while active_tasks > 0:
+                msg_type, data = await main_queue.get()
+                if msg_type == "data":
+                    yield data
+                elif msg_type == "task_done":
+                    active_tasks -= 1
+                    
+            await main_queue.put(("data", json.dumps({"status": "progress", "progress": 95, "message": "Merging and deduplicating results..."}) + "\n"))
+            
+            for key in extracted_data_result:
+                extracted_data_result[key] = _dedupe_extracted_list(extracted_data_result[key])
+
+            yield json.dumps({
+                "status": "success",
+                "data": {
+                    "extracted_data": extracted_data_result,
+                    "warnings": doc_text_result["warnings"],
+                    "filename": file.filename,
+                    "extractor": doc_text_result["extractor"]
+                }
+            }) + "\n"
+
+        except Exception as general_exc:
+            yield json.dumps({"status": "error", "error": f"Unexpected error: {str(general_exc)}"}) + "\n"
+            
+    return StreamingResponse(generate_progress(), media_type="application/x-ndjson")
+
+
+@router.post('/download-filled-templates')
+async def download_filled_templates(data: dict):
+    """
+    Generate and download a ZIP file of CSV templates pre-filled with the extracted data.
+    """
+    import csv
+    import io
+    import zipfile
+    from fastapi.responses import StreamingResponse
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        for import_type in IMPORT_ORDER:
+            headers = []
+            if import_type == 'departments':
+                headers = ['name', 'code']
+            elif import_type == 'batches':
+                headers = ['name', 'start_time', 'end_time', 'period_duration', 'break_times', 'lunch_break']
+            elif import_type == 'rooms':
+                headers = ['name', 'code', 'room_type', 'capacity', 'department_code']
+            elif import_type == 'classes':
+                headers = ['name', 'section', 'semester', 'student_count', 'department_code', 'batch_name', 'room_code']
+            elif import_type == 'subjects':
+                headers = ['name', 'code', 'hours_per_week', 'requires_lab', 'department_codes', 'batch_name']
+            elif import_type == 'faculty':
+                headers = ['name', 'email', 'department_code']
+            elif import_type == 'mappings':
+                headers = ['subject_code', 'class_name', 'class_section', 'faculty_email', 'room_code']
+
+            items = data.get(import_type, [])
+            if not items and import_type == 'faculty' and 'faculties' in data:
+                items = data.get('faculties', [])
+
+            csv_buffer = io.StringIO()
+            writer = csv.writer(csv_buffer)
+            writer.writerow(headers)
+
+            for item in items:
+                row = []
+                for h in headers:
+                    val = item.get(h, '')
+                    if isinstance(val, bool):
+                        val = str(val).lower()
+                    row.append(val)
+                writer.writerow(row)
+
+            csv_content = csv_buffer.getvalue()
+            zip_file.writestr(f"{import_type}_template.csv", csv_content)
+
+    zip_buffer.seek(0)
+    return StreamingResponse(
+        zip_buffer,
+        media_type='application/zip',
+        headers={
+            'Content-Disposition': 'attachment; filename=extracted_academic_templates.zip',
+            'Cache-Control': 'no-cache, no-store, must-revalidate'
+        }
+    )
+
+
+@router.post('/import-extracted-data')
+async def import_extracted_data(data: dict, db=Depends(get_tenant_db), _current_user: dict = Depends(get_admin_user)):
+    """
+    Directly import the extracted JSON data into the database.
+    Runs the existing CSV import handlers sequentially to ensure integrity.
+    """
+    results = {}
+    total_imported = 0
+    total_skipped = 0
+    total_warnings = 0
+    total_errors = 0
+
+    for import_type in IMPORT_ORDER:
+        items = data.get(import_type, [])
+        if not items and import_type == 'faculty' and 'faculties' in data:
+            items = data.get('faculties', [])
+
+        if not items:
+            continue
+
+        rows = []
+        for index, item in enumerate(items, start=1):
+            row_dict = {}
+            for k, v in item.items():
+                row_dict[str(k)] = str(v) if v is not None else ""
+            rows.append((index, row_dict))
+
+        result = _empty_result(import_type)
+        try:
+            IMPORT_HANDLERS[import_type](db, rows, result)
+            total_imported += result.get('imported', 0)
+            total_skipped += result.get('skipped', 0)
+            total_warnings += result.get('warning_count', 0)
+            total_errors += result.get('error_count', 0)
+            results[import_type] = result
+        except Exception as e:
+            results[import_type] = {
+                "status": "failed",
+                "message": f"Import failed: {str(e)}"
+            }
+            total_errors += 1
+
+    return {
+        "status": "completed",
+        "imported": total_imported,
+        "skipped": total_skipped,
+        "warning_count": total_warnings,
+        "error_count": total_errors,
+        "results": results
+    }
