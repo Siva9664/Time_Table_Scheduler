@@ -180,6 +180,44 @@ export default function DocumentExtractorModal({ isOpen, onClose, onImportSucces
     }
   };
 
+  const startExcelExtraction = async () => {
+    if (!file) return;
+    
+    setLoading(true);
+    setLoadingStage('Parsing Excel File...');
+    setProgress(50);
+    setModelLogs('Sending Excel file to strict parser endpoint...\n');
+
+    const form = new FormData();
+    form.append('file', file);
+
+    try {
+      const response = await api.post('/imports/extract-excel-data', form);
+      const data = response.data;
+      
+      if (data.status === 'success') {
+         const { extracted_data, warnings: serverWarnings, extractor } = data.data;
+         setExtractedData(extracted_data);
+         setWarnings(serverWarnings || []);
+         setProgress(100);
+         const totalItems = Object.values(extracted_data).reduce((sum, arr) => sum + arr.length, 0);
+         setModelLogs(prev => prev + `Success: Extracted ${totalItems} rows from Excel sheets.\n`);
+         showToast(`Extracted ${totalItems} items strictly from Excel!`, 'success');
+      } else {
+         throw new Error('Failed to parse Excel');
+      }
+    } catch (err) {
+      console.error(err);
+      setModelLogs(prev => prev + `Error: ${err.message}\n`);
+      showToast(err.response?.data?.detail || err.message || 'Excel extraction failed', 'error');
+    } finally {
+      setLoading(false);
+      setLoadingStage('');
+      setProgress(0);
+    }
+  };
+
+
   const handleCellChange = (tabId, rowIndex, fieldName, value) => {
     const updatedData = { ...extractedData };
     updatedData[tabId][rowIndex][fieldName] = value;
@@ -363,11 +401,21 @@ export default function DocumentExtractorModal({ isOpen, onClose, onImportSucces
 
                   <button
                     onClick={startExtraction}
-                    className="flex items-center gap-3 px-8 py-4 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white text-base font-black rounded-2xl shadow-xl hover:shadow-2xl transition-all duration-200 active:scale-95 group"
+                    className="flex items-center gap-3 px-8 py-4 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white text-base font-black rounded-2xl shadow-xl hover:shadow-2xl transition-all duration-200 active:scale-95 group w-full justify-center"
                   >
                     Start Extraction Pipeline
                     <ArrowRight size={18} className="transform group-hover:translate-x-1 transition-transform" />
                   </button>
+                  
+                  {file && (file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls')) && (
+                    <button
+                      onClick={startExcelExtraction}
+                      className="mt-3 flex items-center gap-3 px-8 py-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-base font-black rounded-2xl shadow-xl hover:shadow-2xl transition-all duration-200 active:scale-95 group w-full justify-center"
+                    >
+                      Extract Excel Data (Strict Mode)
+                      <FileSpreadsheet size={18} className="transform group-hover:translate-x-1 transition-transform" />
+                    </button>
+                  )}
                 </div>
               )}
             </div>
