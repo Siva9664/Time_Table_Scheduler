@@ -1456,3 +1456,113 @@ async def import_extracted_data(data: dict, db=Depends(get_tenant_db), _current_
         "error_count": total_errors,
         "results": results
     }
+
+def _extract_excel_data(content: bytes) -> dict:
+    import openpyxl
+    import io
+
+    wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+    
+    extracted_data_result = {
+        "departments": [], "batches": [], "classes": [], "rooms": [],
+        "subjects": [], "faculty": [], "mappings": []
+    }
+    warnings = []
+
+    for sheet_name in wb.sheetnames:
+        sheet = wb[sheet_name]
+        
+        # Guess import type from sheet name
+        import_type = _guess_import_type(sheet_name + ".csv")
+        if not import_type or import_type not in extracted_data_result:
+            warnings.append(f"Sheet '{sheet_name}' was skipped because it did not match any known import type.")
+            continue
+
+        # Extract rows
+        rows = list(sheet.iter_rows(values_only=True))
+        if not rows:
+            warnings.append(f"Sheet '{sheet_name}' is empty.")
+            continue
+
+        # Find header row (first row with any data)
+        header_row_idx = -1
+        for i, row in enumerate(rows):
+            if any(cell is not None and str(cell).strip() != "" for cell in row):
+                header_row_idx = i
+                break
+        
+        if header_row_idx == -1:
+            warnings.append(f"Sheet '{sheet_name}' has no headers.")
+            continue
+
+        headers = [str(cell).strip() if cell is not None else "" for cell in rows[header_row_idx]]
+        
+        try:
+            # map_headers throws HTTPException if required headers are missing
+            header_mapping = map_headers(headers, import_type)
+        except HTTPException as e:
+            warnings.append(f"Sheet '{sheet_name}': {e.detail}")
+            continue
+
+        # Process data rows
+        for row_idx in range(header_row_idx + 1, len(rows)):
+            row = rows[row_idx]
+            
+            # Skip if row is completely empty
+            if not any(cell is not None and str(cell).strip() != "" for cell in row):
+                continue
+
+            raw_row = {}
+            for col_idx, header in enumerate(headers):
+                if col_idx < len(row):
+                    cell_val = row[col_idx]
+                    raw_row[header] = str(cell_val).strip() if cell_val is not None else ""
+                else:
+                    raw_row[header] = ""
+
+            norm_row = {}
+            for target_key, uploaded_key in header_mapping.items():
+                norm_row[target_key] = raw_row.get(uploaded_key, '').strip()
+
+            extracted_data_result[import_type].append(norm_row)
+
+    # Deduplicate extracted lists
+    for key in extracted_data_result:
+        extracted_data_result[key] = _dedupe_extracted_list(extracted_data_result[key])
+
+    return {
+        "extracted_data": extracted_data_result,
+        "warnings": warnings,
+        "extractor": "excel"
+    }
+
+
+@router.post('/extract-excel-data')
+async def extract_excel_data(
+    file: UploadFile = File(...),
+    db=Depends(get_tenant_db),
+    _current_user: dict = Depends(get_admin_user),
+):
+    """
+    Extract data from an uploaded Excel file, strictly mapping to templates without AI hallucinations.
+    Skips empty rows and maps each sheet.
+    """
+    import asyncio
+
+    if file.filename and not (file.filename.lower().endswith('.xlsx') or file.filename.lower().endswith('.xls')):
+        raise HTTPException(status_code=400, detail="Only .xlsx or .xls files are supported for Excel extraction.")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+
+    try:
+        data = await asyncio.to_thread(_extract_excel_data, content)
+        data["filename"] = file.filename
+        
+        return {
+            "status": "success",
+            "data": data
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to process Excel file: {str(e)}")
