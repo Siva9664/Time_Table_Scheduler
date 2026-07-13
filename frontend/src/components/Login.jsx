@@ -209,17 +209,14 @@ export default function Login() {
       setUsername('faculty');
       setPassword('faculty123');
     }
+    
+    // Automatically submit after filling demo credentials for super smooth interaction
+    // Scheduling this here ensures it only runs on explicit click of the demo buttons,
+    // avoiding issues with browser autofills triggering automatic logins on click anywhere.
+    setTimeout(() => {
+      handleLogin();
+    }, 400);
   };
-
-  // Automatically submit after filling demo credentials for super smooth interaction
-  useEffect(() => {
-    if ((username === 'admin' && password === 'admin123') || (username === 'faculty' && password === 'faculty123')) {
-      const timer = setTimeout(() => {
-        handleLogin();
-      }, 400);
-      return () => clearTimeout(timer);
-    }
-  }, [username, password]);
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-4 md:p-8 relative overflow-hidden select-none bg-bg-primary font-sans">

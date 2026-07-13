@@ -70,6 +70,7 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = BACKEND_DIR / ".env"
+        extra = "ignore"
 
 settings = Settings()
 

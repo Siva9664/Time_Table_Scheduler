@@ -91,14 +91,14 @@ class DocumentConstraintTests(unittest.TestCase):
         rows = result["extracted_timetable"]
 
         self.assertEqual(result["source"], "deterministic")
-        self.assertEqual(len(rows), 3)
-        self.assertEqual(rows[1]["course_details"]["subject_code"], "CS101")
-        self.assertEqual(rows[1]["course_details"]["subject_name"], "Data Structures")
-        self.assertEqual(rows[1]["course_details"]["type"], "Lab")
-        self.assertEqual(rows[1]["faculty_assignment"]["full_name"], "Dr Rao")
-        self.assertTrue(rows[1]["additional_metadata"]["is_ambiguous_or_split"])
-        self.assertTrue(rows[2]["course_details"]["is_elective"])
-        self.assertEqual(rows[2]["course_details"]["elective_group"], "Professional Elective I")
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["course_details"]["subject_code"], "CS101")
+        self.assertEqual(rows[0]["course_details"]["subject_name"], "Data Structures")
+        self.assertEqual(rows[0]["course_details"]["type"], "Blended")
+        self.assertEqual(rows[0]["faculty_assignment"]["full_name"], "Dr Rao")
+        self.assertTrue(rows[0]["additional_metadata"]["is_ambiguous_or_split"])
+        self.assertTrue(rows[1]["course_details"]["is_elective"])
+        self.assertEqual(rows[1]["course_details"]["elective_group"], "Professional Elective I")
 
     def test_csv_extraction_preserves_leading_blank_cells_for_merged_rows(self):
         document = extract_document_text(
@@ -114,11 +114,11 @@ class DocumentConstraintTests(unittest.TestCase):
         result = analyze_academic_documents([document])
         rows = result["extracted_timetable"]
 
-        self.assertEqual(len(rows), 2)
-        self.assertEqual(rows[1]["course_details"]["subject_code"], "CS101")
-        self.assertEqual(rows[1]["course_details"]["subject_name"], "Data Structures")
-        self.assertEqual(rows[1]["course_details"]["type"], "Lab")
-        self.assertEqual(rows[1]["credit_structure"]["practical_hours_P"], 2)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["course_details"]["subject_code"], "CS101")
+        self.assertEqual(rows[0]["course_details"]["subject_name"], "Data Structures")
+        self.assertEqual(rows[0]["course_details"]["type"], "Blended")
+        self.assertEqual(rows[0]["credit_structure"]["practical_hours_P"], 2)
 
     def test_academic_analysis_drops_model_header_rows(self):
         normalized, warnings = normalize_extracted_timetable({
@@ -259,7 +259,7 @@ class DocumentConstraintTests(unittest.TestCase):
 
         self.assertEqual(result["source"], "deterministic")
         self.assertIn("less structured", " ".join(result["warnings"]))
-        self.assertEqual(len(result["extracted_timetable"]), 2)
+        self.assertEqual(len(result["extracted_timetable"]), 1)
         self.assertEqual(result["extracted_timetable"][0]["course_details"]["subject_code"], "CS101")
 
 

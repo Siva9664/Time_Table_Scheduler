@@ -76,6 +76,118 @@ Return exactly: {"extracted_timetable":[{"meta":{"row_index":1,"raw_text_line":"
 No markdown. No explanations. No reasoning."""
 
 
+def merge_duplicate_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Merge duplicate timetable rows based on subject_code and subject_name."""
+    import copy
+    merged: List[Dict[str, Any]] = []
+
+    def rows_match(r1: Dict[str, Any], r2: Dict[str, Any]) -> bool:
+        det1 = r1.get("course_details", {})
+        det2 = r2.get("course_details", {})
+        
+        c1 = (det1.get("subject_code") or "").strip().upper()
+        c2 = (det2.get("subject_code") or "").strip().upper()
+        
+        n1 = (det1.get("subject_name") or "").strip().lower()
+        n2 = (det2.get("subject_name") or "").strip().lower()
+        
+        if c1 and c2:
+            return c1 == c2
+        if not c1 and not c2:
+            return n1 == n2 if n1 else False
+        if n1 and n2:
+            return n1 == n2
+        return False
+
+    for row in rows:
+        match_found = False
+        for existing in merged:
+            if rows_match(existing, row):
+                # Merge row into existing
+                ext_det = existing.get("course_details", {})
+                cur_det = row.get("course_details", {})
+                if not ext_det.get("subject_code") and cur_det.get("subject_code"):
+                    ext_det["subject_code"] = cur_det["subject_code"]
+                if not ext_det.get("subject_name") and cur_det.get("subject_name"):
+                    ext_det["subject_name"] = cur_det["subject_name"]
+                
+                t1 = ext_det.get("type") or "Unknown"
+                t2 = cur_det.get("type") or "Unknown"
+                if t1 == "Unknown":
+                    ext_det["type"] = t2
+                elif t2 != "Unknown" and t1 != t2:
+                    if (t1 == "Theory" and t2 == "Lab") or (t1 == "Lab" and t2 == "Theory"):
+                        ext_det["type"] = "Blended"
+
+                ext_det["is_elective"] = ext_det.get("is_elective", False) or cur_det.get("is_elective", False)
+                if not ext_det.get("elective_group") and cur_det.get("elective_group"):
+                    ext_det["elective_group"] = cur_det["elective_group"]
+
+                ext_cred = existing.get("credit_structure", {})
+                cur_cred = row.get("credit_structure", {})
+                for field in ("lecture_hours_L", "tutorial_hours_T", "practical_hours_P", "total_credits_C"):
+                    v1 = ext_cred.get(field) or 0
+                    v2 = cur_cred.get(field) or 0
+                    if v1 == v2:
+                        ext_cred[field] = v1
+                    else:
+                        ext_cred[field] = v1 + v2
+
+                ext_fac = existing.get("faculty_assignment", {})
+                cur_fac = row.get("faculty_assignment", {})
+                
+                f1 = ext_fac.get("full_name") or ""
+                f2 = cur_fac.get("full_name") or ""
+                
+                def parse_names(name_str):
+                    if not name_str:
+                        return []
+                    return [n.strip() for n in re.split(r'[,;/]|\band\b', name_str) if n.strip()]
+                    
+                names1 = parse_names(f1)
+                names2 = parse_names(f2)
+                merged_names = []
+                for name in (names1 + names2):
+                    if name not in merged_names:
+                        merged_names.append(name)
+                ext_fac["full_name"] = ", ".join(merged_names) if merged_names else None
+                
+                d1 = ext_fac.get("designation") or ""
+                d2 = cur_fac.get("designation") or ""
+                desig1 = parse_names(d1)
+                desig2 = parse_names(d2)
+                merged_desig = []
+                for des in (desig1 + desig2):
+                    if des not in merged_desig:
+                        merged_desig.append(des)
+                ext_fac["designation"] = ", ".join(merged_desig) if merged_desig else None
+
+                ext_meta = existing.get("additional_metadata", {})
+                cur_meta = row.get("additional_metadata", {})
+                r1 = ext_meta.get("remarks") or ""
+                r2 = cur_meta.get("remarks") or ""
+                rems1 = [r.strip() for r in re.split(r'\. ', r1) if r.strip()]
+                rems2 = [r.strip() for r in re.split(r'\. ', r2) if r.strip()]
+                merged_rems = []
+                for rem in (rems1 + rems2):
+                    if rem not in merged_rems:
+                        merged_rems.append(rem)
+                
+                merge_note = "Merged duplicate records."
+                if merge_note not in merged_rems:
+                    merged_rems.append(merge_note)
+                ext_meta["remarks"] = ". ".join(merged_rems)
+                ext_meta["is_ambiguous_or_split"] = ext_meta.get("is_ambiguous_or_split", False) or cur_meta.get("is_ambiguous_or_split", False)
+                
+                match_found = True
+                break
+        
+        if not match_found:
+            merged.append(copy.deepcopy(row))
+            
+    return merged
+
+
 def analyze_academic_documents(
     documents: Iterable[ExtractedDocument],
     *,
@@ -113,13 +225,13 @@ def analyze_academic_documents(
                     return {
                         "source": "deterministic",
                         "model": model,
-                        "extracted_timetable": deterministic_rows,
+                        "extracted_timetable": merge_duplicate_rows(deterministic_rows),
                         "warnings": warnings,
                     }
                 return {
                     "source": "local-model",
                     "model": model,
-                    "extracted_timetable": normalized,
+                    "extracted_timetable": merge_duplicate_rows(normalized),
                     "warnings": warnings,
                 }
             warnings.append("Local document model returned no usable timetable rows; used deterministic fallback.")
@@ -133,7 +245,7 @@ def analyze_academic_documents(
     return {
         "source": "deterministic",
         "model": model,
-        "extracted_timetable": deterministic_rows,
+        "extracted_timetable": merge_duplicate_rows(deterministic_rows),
         "warnings": warnings,
     }
 

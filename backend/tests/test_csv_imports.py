@@ -147,6 +147,13 @@ class CsvImportTests(unittest.TestCase):
         self.assertEqual(mapping['faculty_email'], 'email')
         self.assertNotIn('room_code', mapping)
 
+    def test_header_mapping_maps_generic_code_to_department_code_for_classes_and_faculty(self):
+        mapping_classes = map_headers(['name', 'section', 'semester', 'student_count', 'code', 'batch_name', 'room_code'], 'classes')
+        self.assertEqual(mapping_classes['department_code'], 'code')
+
+        mapping_faculty = map_headers(['name', 'email', 'code', 'max_hours_per_week', 'unavailable_slots'], 'faculty')
+        self.assertEqual(mapping_faculty['department_code'], 'code')
+
     def test_folder_file_type_guessing_handles_common_names(self):
         self.assertEqual(_guess_import_type('departments_template (1).csv'), 'departments')
         self.assertEqual(_guess_import_type('spring-faculty-mappings.csv'), 'mappings')
