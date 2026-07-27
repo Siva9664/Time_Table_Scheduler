@@ -14,7 +14,12 @@ import {
     Table,
     Settings,
     LogOut,
-    GraduationCap
+    GraduationCap,
+    Brain,
+    Upload,
+    History,
+    ClipboardList,
+    BookMarked
 } from 'lucide-react';
 
 const Icons = {
@@ -101,6 +106,16 @@ export default function Sidebar() {
                         
                         <div className="h-px bg-slate-800 my-4 mx-4" />
                         <NavItem to="/generate" label="Generate" icon={Icons.Generate} />
+
+                        <div className="h-px bg-slate-800 my-4 mx-4" />
+                        {/* Knowledge Ingestion */}
+                        <div className={`px-4 py-1 overflow-hidden transition-all duration-1000 ${isExpanded ? 'opacity-100' : 'opacity-0 h-0'}`}>
+                            <span className="text-xs font-black text-slate-600 uppercase tracking-widest">Knowledge AI</span>
+                        </div>
+                        <NavItem to="/knowledge/upload" label="Upload Docs" icon={Upload} />
+                        <NavItem to="/knowledge/history" label="Upload History" icon={History} />
+                        <NavItem to="/knowledge/audit-logs" label="Audit Logs" icon={ClipboardList} />
+                        <NavItem to="/knowledge/learning-rules" label="Learning Rules" icon={BookMarked} />
                     </>
                 )}
                 

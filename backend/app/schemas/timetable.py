@@ -1,23 +1,30 @@
-from pydantic import BaseModel, EmailStr
-from typing import Optional, List, Dict, Any
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, EmailStr
+
 
 class DepartmentBase(BaseModel):
     name: str
     code: str
 
+
 class DepartmentCreate(DepartmentBase):
     pass
+
 
 class DepartmentUpdate(BaseModel):
     name: Optional[str] = None
     code: Optional[str] = None
 
+
 class DepartmentResponse(DepartmentBase):
     id: str
     created_at: datetime
+
     class Config:
         from_attributes = True
+
 
 class BatchBase(BaseModel):
     name: str
@@ -27,8 +34,10 @@ class BatchBase(BaseModel):
     break_times: List[Dict[str, str]] = []
     lunch_break: Dict[str, str] = {}
 
+
 class BatchCreate(BatchBase):
     pass
+
 
 class BatchUpdate(BaseModel):
     name: Optional[str] = None
@@ -38,11 +47,14 @@ class BatchUpdate(BaseModel):
     break_times: Optional[List[Dict[str, str]]] = None
     lunch_break: Optional[Dict[str, str]] = None
 
+
 class BatchResponse(BatchBase):
     id: str
     created_at: datetime
+
     class Config:
         from_attributes = True
+
 
 class ClassBase(BaseModel):
     name: str
@@ -53,8 +65,10 @@ class ClassBase(BaseModel):
     batch_id: Optional[str] = None
     room_id: Optional[str] = None
 
+
 class ClassCreate(ClassBase):
     pass
+
 
 class ClassUpdate(BaseModel):
     name: Optional[str] = None
@@ -65,13 +79,16 @@ class ClassUpdate(BaseModel):
     batch_id: Optional[str] = None
     room_id: Optional[str] = None
 
+
 class ClassResponse(ClassBase):
     id: str
     created_at: datetime
     department: Optional[DepartmentResponse] = None
     batch: Optional[BatchResponse] = None
+
     class Config:
         from_attributes = True
+
 
 class RoomBase(BaseModel):
     name: str
@@ -80,8 +97,10 @@ class RoomBase(BaseModel):
     room_type: str = "lecture"
     department_id: Optional[str] = None
 
+
 class RoomCreate(RoomBase):
     pass
+
 
 class RoomUpdate(BaseModel):
     name: Optional[str] = None
@@ -90,12 +109,15 @@ class RoomUpdate(BaseModel):
     room_type: Optional[str] = None
     department_id: Optional[str] = None
 
+
 class RoomResponse(RoomBase):
     id: str
     created_at: datetime
     department: Optional[DepartmentResponse] = None
+
     class Config:
         from_attributes = True
+
 
 class SubjectBase(BaseModel):
     name: str
@@ -110,13 +132,16 @@ class SubjectBase(BaseModel):
     faculty_id: Optional[str] = None
     source_subject_id: Optional[str] = None
 
+
 class SubjectCreate(SubjectBase):
     pass
+
 
 class SubjectMapRequest(BaseModel):
     class_id: str
     faculty_id: str
     room_id: Optional[str] = None
+
 
 class SubjectUpdate(BaseModel):
     name: Optional[str] = None
@@ -132,12 +157,15 @@ class SubjectUpdate(BaseModel):
     faculty_id: Optional[str] = None
     source_subject_id: Optional[str] = None
 
+
 class SubjectResponse(SubjectBase):
     id: str
     created_at: datetime
     assigned_class: Optional[ClassResponse] = None
+
     class Config:
         from_attributes = True
+
 
 class FacultyBase(BaseModel):
     name: str
@@ -146,8 +174,10 @@ class FacultyBase(BaseModel):
     max_hours_per_week: int = 20
     unavailable_slots: List[Dict[str, Any]] = []
 
+
 class FacultyCreate(FacultyBase):
     pass
+
 
 class FacultyUpdate(BaseModel):
     name: Optional[str] = None
@@ -156,11 +186,14 @@ class FacultyUpdate(BaseModel):
     max_hours_per_week: Optional[int] = None
     unavailable_slots: Optional[List[Dict[str, Any]]] = None
 
+
 class FacultyResponse(FacultyBase):
     id: str
     created_at: datetime
+
     class Config:
         from_attributes = True
+
 
 class TimetableGenerateRequest(BaseModel):
     name: str
@@ -184,6 +217,7 @@ class TimetableGenerateRequest(BaseModel):
     break_times: Optional[List[Dict[str, str]]] = None
     constraints_text: Optional[str] = None
 
+
 class TimetableResponse(BaseModel):
     id: str
     name: str
@@ -194,5 +228,6 @@ class TimetableResponse(BaseModel):
     solver_status: str
     solve_time_seconds: float
     created_at: datetime
+
     class Config:
         from_attributes = True

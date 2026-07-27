@@ -121,4 +121,28 @@ export const timetableAPI = {
   delete: (id) => api.delete(`/timetables/${id}`)
 };
 
+export const ingestionAPI = {
+  upload: (files) => {
+    const formData = new FormData();
+    Array.from(files).forEach((f) => formData.append('files', f));
+    return api.post('/knowledge/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  getProgress: (sessionId) => `${API_BASE_URL}/knowledge/progress/${sessionId}`,
+  getReview: (sessionId) => api.get(`/knowledge/review/${sessionId}`),
+  applyDecisions: (sessionId, decisions) =>
+    api.post('/knowledge/review/apply', { session_id: sessionId, decisions }),
+  applyAutoMerges: (sessionId) =>
+    api.post(`/knowledge/review/apply-auto/${sessionId}`),
+  getHistory: () => api.get('/knowledge/history'),
+  getSessionStatus: (sessionId) => api.get(`/knowledge/session/${sessionId}`),
+  rollbackSession: (sessionId) =>
+    api.post(`/knowledge/history/${sessionId}/rollback`),
+  getAuditLogs: (params = {}) => api.get('/knowledge/audit-logs', { params }),
+  getAliases: () => api.get('/knowledge/aliases'),
+  createAlias: (data) => api.post('/knowledge/aliases', data),
+  deleteAlias: (id) => api.delete(`/knowledge/aliases/${id}`),
+};
+
 export default api;
