@@ -25,9 +25,10 @@ from typing import Dict, List, Optional
 from loguru import logger
 
 # ── Threshold constants ────────────────────────────────────────────────────────
-THRESHOLD_AUTO_MERGE = 99  # ≥ this: auto-merge silently
-THRESHOLD_STRONG = 95  # ≥ this: strong recommendation
-THRESHOLD_ASK = 85  # ≥ this: ask user
+THRESHOLD_AUTO_MERGE = 98
+THRESHOLD_STRONG = 95
+THRESHOLD_UPDATE = 90
+THRESHOLD_ASK = 90
 # < THRESHOLD_ASK → treat as new record
 
 # ── Known common abbreviations ─────────────────────────────────────────────────
@@ -254,15 +255,16 @@ class DuplicateResult:
         }
 
 
-def _classify_action(score: float) -> str:
+def _classify_action(score: float, has_key_match: bool = False) -> str:
     if score >= THRESHOLD_AUTO_MERGE:
         return "auto_merge"
-    elif score >= THRESHOLD_STRONG:
-        return "strong_recommendation"
+    elif score >= THRESHOLD_UPDATE and has_key_match:
+        return "auto_update"
     elif score >= THRESHOLD_ASK:
         return "ask_user"
     else:
         return "new_record"
+
 
 
 def find_duplicate(
@@ -284,11 +286,28 @@ def find_duplicate(
     best_score = 0.0
     best_match = None
     best_reason = ""
+    has_key_match = False
 
     for existing in existing_entities:
         ex_keys = _get_match_keys(entity_type, existing)
         if not ex_keys:
             continue
+
+        # Check for strict key identifier match (e.g. Email or Code) for auto_update
+        strict_keys = []
+        if entity_type == "faculty":
+            strict_keys = [str(new_entity.get("email", "")).strip().lower()] if new_entity.get("email") else []
+            ex_strict_keys = [str(existing.get("email", "")).strip().lower()] if existing.get("email") else []
+        elif entity_type in ["departments", "subjects", "rooms"]:
+            strict_keys = [str(new_entity.get("code", "")).strip().lower()] if new_entity.get("code") else []
+            ex_strict_keys = [str(existing.get("code", "")).strip().lower()] if existing.get("code") else []
+
+        strict_match = False
+        if strict_keys and ex_strict_keys:
+            for sk in strict_keys:
+                if sk and sk in ex_strict_keys:
+                    strict_match = True
+                    break
 
         # Compare all key combinations, take max
         for nk in new_keys:
@@ -298,8 +317,9 @@ def find_duplicate(
                     best_score = s
                     best_match = existing
                     best_reason = f"'{nk}' ≈ '{ek}' ({s:.1f}%)"
+                    has_key_match = strict_match
 
-    action = _classify_action(best_score)
+    action = _classify_action(best_score, has_key_match)
 
     # Detect field-level conflicts if there's a match
     conflicts: List[Dict] = []
@@ -315,7 +335,6 @@ def find_duplicate(
         action=action,
         conflicting_fields=conflicts,
     )
-
 
 def _detect_field_conflicts(
     entity_type: str, new_entity: Dict, existing: Dict
@@ -357,39 +376,41 @@ def _detect_field_conflicts(
     return conflicts
 
 
-def check_missing_fields(entity_type: str, entity: Dict) -> List[str]:
+def check_missing_fields(entity_type: str, entity: Dict) -> Dict[str, List[str]]:
     """
     Phase 9: Detect missing important fields for an entity.
+    Returns a dict with 'required' and 'recommended' missing fields.
     """
-    required = {
+    required_fields = {
         "departments": ["name", "code"],
-        "faculty": ["name", "email"],
+        "faculty": ["name", "department_code"],
         "subjects": ["name", "code"],
         "rooms": ["name"],
         "classes": ["name"],
         "batches": ["name"],
     }
-    recommended = {
+    recommended_fields = {
         "departments": [],
-        "faculty": ["department_code", "max_hours_per_week"],
+        "faculty": ["designation", "max_hours_per_week"],
         "subjects": ["credits", "hours_per_week"],
         "rooms": ["room_type", "capacity"],
         "classes": ["semester", "department_code"],
         "batches": ["start_time", "end_time"],
     }
 
-    missing = []
-    for field in required.get(entity_type, []):
+    # Add mapping to match provided prompt:
+    # Faculty Required: facultyName (handled as name here, it maps to name in db), department
+    # Note: 'facultyName' and 'department' maps to 'name' and 'department_code' in our schema
+
+    missing = {"required": [], "recommended": []}
+    for field in required_fields.get(entity_type, []):
         if not entity.get(field):
-            missing.append(f"REQUIRED: {field}")
-    for field in recommended.get(entity_type, []):
+            missing["required"].append(field)
+    for field in recommended_fields.get(entity_type, []):
         if not entity.get(field) and entity.get(field) != 0:
-            missing.append(f"RECOMMENDED: {field}")
+            missing["recommended"].append(field)
 
     return missing
-
-
-# ── Batch deduplication against MongoDB ───────────────────────────────────────
 
 
 def run_deduplication(

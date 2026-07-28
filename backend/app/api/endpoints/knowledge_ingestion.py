@@ -20,6 +20,7 @@ from loguru import logger
 from pydantic import BaseModel
 from pymongo.database import Database
 
+from ...database.database import get_client
 from ...core.security import get_admin_user, get_current_user, get_tenant_db
 from ...services.ingestion.ai_extractor import (extract_entities_from_document,
                                                 merge_extractions)
@@ -81,7 +82,7 @@ class AliasDecision(BaseModel):
 # ── Helper ─────────────────────────────────────────────────────────────────────
 
 
-def _entity_to_db_fields(entity_type: str, entity: Dict, db: Database) -> Dict:
+def _entity_to_db_fields(entity_type: str, entity: Dict, db: Database, session: Optional[Any] = None) -> Dict:
     """
     Convert extracted entity dict to DB-compatible format,
     resolving department_code → department_id etc.
@@ -94,9 +95,7 @@ def _entity_to_db_fields(entity_type: str, entity: Dict, db: Database) -> Dict:
     # Resolve department_code → department_id
     dept_code = clean.pop("department_code", None)
     if dept_code:
-        dept = db["departments"].find_one({"code": dept_code}) or db[
-            "departments"
-        ].find_one({"name": dept_code})
+        dept = db["departments"].find_one({"code": dept_code}, session=session) or db["departments"].find_one({"name": dept_code}, session=session)
         if dept:
             clean["department_id"] = str(dept["_id"])
 
@@ -105,15 +104,69 @@ def _entity_to_db_fields(entity_type: str, entity: Dict, db: Database) -> Dict:
     if dept_codes and isinstance(dept_codes, list):
         dept_ids = []
         for code in dept_codes:
-            dept = db["departments"].find_one({"code": code}) or db[
-                "departments"
-            ].find_one({"name": code})
+            dept = db["departments"].find_one({"code": code}, session=session) or db["departments"].find_one({"name": code}, session=session)
             if dept:
                 dept_ids.append(str(dept["_id"]))
         if dept_ids:
             clean["department_ids"] = dept_ids
 
     return clean
+
+
+
+# ── Phase 15 & 16: Relationships & Verification Helpers ───────────────────────
+
+def _build_relationships(db: Database, entity_type: str, entity_id: str, clean_entity: Dict, session: Optional[Any] = None) -> None:
+    """
+    Automatically fetch and update related collections (e.g. mapping faculty to departments).
+    """
+    if entity_type == "faculty":
+        dept_code = clean_entity.get("department_code")
+        if dept_code:
+            dept = db["departments"].find_one({"code": dept_code}, session=session)
+            if dept:
+                # Upsert a faculty mapping
+                mapping = {
+                    "faculty_id": entity_id,
+                    "department_id": str(dept["_id"]),
+                    "faculty_name": clean_entity.get("name"),
+                    "updated_at": _utcnow(),
+                }
+                db["mappings"].update_one(
+                    {"faculty_id": entity_id},
+                    {"$set": mapping},
+                    upsert=True,
+                    session=session
+                )
+
+    elif entity_type == "subjects":
+        # Check for departments based on department_ids already resolved in _entity_to_db_fields
+        dept_ids = clean_entity.get("department_ids", [])
+        for d_id in dept_ids:
+            # Upsert into a generic subject-department mapping if needed,
+            # but usually subjects just hold the department_ids list in our current schema.
+            pass
+
+
+def _verify_insertion(db: Database, entity_type: str, entity_id: str, session: Optional[Any] = None) -> None:
+    """
+    Phase 17: Post-Insert Verification
+    Read the inserted document back from MongoDB. Throw if it doesn't exist.
+    """
+    from ...services.ingestion.mongo_writer import ENTITY_COLLECTION
+    from bson import ObjectId
+    coll_name = ENTITY_COLLECTION.get(entity_type)
+    if not coll_name:
+        return
+
+    try:
+        oid = ObjectId(entity_id)
+    except Exception:
+        raise ValueError(f"Invalid entity ID format for {entity_type}: {entity_id}")
+
+    doc = db[coll_name].find_one({"_id": oid}, session=session)
+    if not doc:
+        raise RuntimeError(f"Post-insert verification failed: {entity_type} {entity_id} not found in DB.")
 
 
 # ── Phase 1: Upload ────────────────────────────────────────────────────────────
@@ -267,7 +320,8 @@ async def _run_ingestion_pipeline(
     )
     await asyncio.sleep(0)
 
-    # Phase 6 & 7: Deduplication
+
+    # Phase 6 & 7: Deduplication and Database Auto-Population
     learned_aliases = get_learned_aliases(db)
     entity_types = ["departments", "faculty", "subjects", "rooms", "classes", "batches"]
 
@@ -283,6 +337,17 @@ async def _run_ingestion_pipeline(
         "source_files": merged.get("source_files", []),
     }
 
+    stats = {
+        "added": 0,
+        "updated": 0,
+        "merged": 0,
+        "conflicts": 0,
+        "relationships_created": 0,
+        "errors": []
+    }
+
+    client = get_client()
+
     for entity_type in entity_types:
         new_entities = merged.get(entity_type, [])
         if not new_entities:
@@ -297,6 +362,7 @@ async def _run_ingestion_pipeline(
             "classes": "classes",
             "batches": "batches",
         }.get(entity_type, entity_type)
+
         db_entities = list(db[coll_name].find({}))
         # Convert ObjectIds to str for comparison
         for e in db_entities:
@@ -312,19 +378,68 @@ async def _run_ingestion_pipeline(
 
             # Phase 9: Missing field detection
             missing = check_missing_fields(entity_type, dup_result.new_entity)
-            if missing:
+            if missing and (missing.get("required") or missing.get("recommended")):
                 entry["missing_fields"] = missing
-                review_payload["missing_fields"].append(entry)
 
-            if dup_result.action == "auto_merge":
-                review_payload["auto_merged"].append(entry)
-            elif dup_result.action in ("strong_recommendation", "ask_user"):
+                # If required fields are missing, DO NOT insert, move to review payload.
+                if missing.get("required"):
+                    review_payload["missing_fields"].append(entry)
+                    continue
+
+            # Check action and handle automatic population
+            action = dup_result.action
+
+            if action in ("ask_user", "strong_recommendation"):
                 if dup_result.conflicting_fields:
                     review_payload["conflicts"].append(entry)
                 else:
                     review_payload["needs_review"].append(entry)
-            else:  # new_record
-                review_payload["new_records"].append(entry)
+                stats["conflicts"] += 1
+                continue
+
+            # For new_record, auto_merge, auto_update -> populate database automatically
+            try:
+                with client.start_session() as session:
+                    with session.start_transaction():
+                        db_entity = _entity_to_db_fields(entity_type, dup_result.new_entity, db, session)
+                        entity_id, was_inserted = save_entity(
+                            db=db,
+                            entity_type=entity_type,
+                            entity=db_entity,
+                            upload_session_id=session_id,
+                            user=current_user.get("username", "unknown"),
+                            action=action,
+                            confidence_score=dup_result.score,
+                            reason=dup_result.match_reason or "Automatic Population",
+                            session=session
+                        )
+
+                        if was_inserted:
+                            stats["added"] += 1
+                        elif action == "auto_merge":
+                            stats["merged"] += 1
+                        else:
+                            stats["updated"] += 1
+
+                        # Build Relationships
+                        _build_relationships(db, entity_type, entity_id, db_entity, session)
+                        stats["relationships_created"] += 1
+
+                        # Verify Insertion
+                        _verify_insertion(db, entity_type, entity_id, session)
+
+                        # If successful, no need to add to review_payload except for logging/reporting
+                        if action == "new_record":
+                            review_payload["new_records"].append(entry)
+                        else:
+                            review_payload["auto_merged"].append(entry)
+
+            except Exception as e:
+                logger.error(f"Error auto-populating {entity_type}: {e}")
+                stats["errors"].append({"entity_type": entity_type, "error": str(e)})
+                # Add to needs review if failed
+                review_payload["needs_review"].append(entry)
+
 
     # Store review payload in DB for retrieval
     db["ingestion_review_sessions"].replace_one(
@@ -333,19 +448,16 @@ async def _run_ingestion_pipeline(
         upsert=True,
     )
 
-    stats = {
-        "auto_merged": len(review_payload["auto_merged"]),
-        "needs_review": len(review_payload["needs_review"]),
-        "conflicts": len(review_payload["conflicts"]),
-        "new_records": len(review_payload["new_records"]),
-        "missing_fields": len(review_payload["missing_fields"]),
-    }
+    stats["auto_merged"] = len(review_payload["auto_merged"])
+    stats["needs_review"] = len(review_payload["needs_review"])
+    stats["new_records"] = len(review_payload["new_records"])
+    stats["missing_fields"] = len(review_payload["missing_fields"])
 
     _push_progress(
         session_id,
         {
             "stage": "ready",
-            "message": "Analysis complete! Review required.",
+            "message": "Analysis complete! Summary ready.",
             "progress": 100,
             "stats": stats,
         },
@@ -357,10 +469,11 @@ async def _run_ingestion_pipeline(
         session_id,
         stats,
         {et: len(merged.get(et, [])) for et in entity_types},
-        status="awaiting_review",
+        status="completed" if not review_payload["conflicts"] and not review_payload["needs_review"] and not review_payload["missing_fields"] else "awaiting_review",
     )
 
     logger.info(f"Session {session_id} pipeline complete: {stats}")
+
 
 
 # ── Phase: SSE Progress Streaming ─────────────────────────────────────────────

@@ -44,7 +44,8 @@ def record_version(
     new_data: Dict,
     upload_session_id: str,
     user: str,
-    action: str,  # "insert" | "update" | "merge"
+    action: str,
+    session: Optional[Any] = None,
 ) -> None:
     """Store a version snapshot for rollback support."""
     db["ingestion_versions"].insert_one(
@@ -58,7 +59,7 @@ def record_version(
             "user": user,
             "created_at": _utcnow(),
         }
-    )
+    , session=session)
 
 
 # ── Audit Log ─────────────────────────────────────────────────────────────────
@@ -76,6 +77,7 @@ def record_audit(
     user_decision: str,
     user: str,
     upload_session_id: str,
+    session: Optional[Any] = None,
 ) -> None:
     """Record an immutable audit log entry."""
     db["ingestion_audit_logs"].insert_one(
@@ -92,14 +94,14 @@ def record_audit(
             "upload_session_id": upload_session_id,
             "timestamp": _utcnow(),
         }
-    )
+    , session=session)
 
 
 # ── Entity Finders ─────────────────────────────────────────────────────────────
 
 
 def _find_existing_entity(
-    db: Database, entity_type: str, entity: Dict
+    db: Database, entity_type: str, entity: Dict, session: Optional[Any] = None
 ) -> Optional[Dict]:
     """Find an existing DB record by natural key."""
     coll = ENTITY_COLLECTION.get(entity_type)
@@ -119,7 +121,7 @@ def _find_existing_entity(
     for field, value in search_pairs.get(entity_type, []):
         if not value:
             continue
-        doc = collection.find_one({field: value})
+        doc = collection.find_one({field: value}, session=session)
         if doc:
             return doc
 
@@ -138,6 +140,7 @@ def save_entity(
     action: str = "auto_merge",
     confidence_score: float = 100.0,
     reason: str = "",
+    session: Optional[Any] = None,
 ) -> Tuple[str, bool]:
     """
     Insert or update a single entity in MongoDB.
@@ -159,7 +162,7 @@ def save_entity(
     clean.pop("department_codes", None)  # normalize to department_ids later
 
     # Try to find existing
-    existing = _find_existing_entity(db, entity_type, clean)
+    existing = _find_existing_entity(db, entity_type, clean, session=session)
 
     if existing:
         existing_id = str(existing["_id"])
@@ -170,7 +173,7 @@ def save_entity(
             if v == "" or v is None:
                 del update_doc[k]
 
-        collection.update_one({"_id": existing["_id"]}, {"$set": update_doc})
+        collection.update_one({"_id": existing["_id"]}, {"$set": update_doc}, session=session)
 
         # Record version
         record_version(
@@ -182,6 +185,7 @@ def save_entity(
             upload_session_id,
             user,
             "update",
+            session=session,
         )
 
         # Audit log
@@ -197,6 +201,7 @@ def save_entity(
             user_decision=action,
             user=user,
             upload_session_id=upload_session_id,
+            session=session,
         )
 
         logger.debug(f"Updated {entity_type}: {existing_id}")
@@ -204,7 +209,7 @@ def save_entity(
 
     else:
         insert_doc = {**clean, "created_at": now, "updated_at": now}
-        result = collection.insert_one(insert_doc)
+        result = collection.insert_one(insert_doc, session=session)
         entity_id = str(result.inserted_id)
 
         # Record version
@@ -217,6 +222,7 @@ def save_entity(
             upload_session_id,
             user,
             "insert",
+            session=session,
         )
 
         # Audit log
@@ -232,6 +238,7 @@ def save_entity(
             user_decision=action,
             user=user,
             upload_session_id=upload_session_id,
+            session=session,
         )
 
         logger.debug(f"Inserted {entity_type}: {entity_id}")
