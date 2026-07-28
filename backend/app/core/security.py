@@ -44,6 +44,10 @@ async def get_current_user(request: Request, db: Database = Depends(get_db)) -> 
                 ]
             })
             if user:
+                # Link Google UID if not already linked
+                if not user.get("uid"):
+                    db["users"].update_one({"_id": user["_id"]}, {"$set": {"uid": uid}})
+                    user["uid"] = uid
                 return user
                 
             # Auto-onboard Firebase users if they don't exist yet
