@@ -66,6 +66,34 @@ def get_db() -> Database:
     finally:
         pass  # PyMongo connections are pooled; no per-request close needed
 
+def initialize_tenant_db(tenant_db_name: str):
+    """Create a new tenant database with empty collections matching the app schema.
+    
+    MongoDB only materializes a database when data is written to it.
+    We explicitly create_collection() for each expected collection so the
+    database appears immediately and the tenant starts with the correct schema.
+    """
+    client = get_client()
+    tenant_db = client[tenant_db_name]
+    
+    # All collections used by the timetable endpoints
+    collections = [
+        "batches",
+        "departments",
+        "rooms",
+        "classes",
+        "subjects",
+        "faculty",
+        "timetables",
+    ]
+    
+    existing = set(tenant_db.list_collection_names())
+    for col_name in collections:
+        if col_name not in existing:
+            tenant_db.create_collection(col_name)
+    
+    logger.info(f"[SUCCESS] Initialized tenant database: {tenant_db_name} with collections: {collections}")
+
 def close_mongo_connection():
     """Close the MongoDB connection."""
     global _client, _connection_ready

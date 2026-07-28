@@ -143,7 +143,7 @@ Output: {{"constraints":[{{"type":"consecutive_periods","subject_type":"lab"}},{
         return self._strip_md(response.choices[0].message.content or "")
 
     def _supports_json_mode(self) -> bool:
-        supported = {"gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-4o-mini", "llama", "mixtral", "gemma"}
+        supported = {"gpt-4o", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-4o-mini", "llama", "mixtral", "gemma", "gemini"}
         return any(s in (self.model or "").lower() for s in supported)
 
     @staticmethod

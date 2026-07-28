@@ -22,7 +22,8 @@ class Settings(BaseSettings):
     DOCUMENT_UPLOAD_MAX_FILE_BYTES: int = 15 * 1024 * 1024
     DOCUMENT_TEXT_MAX_CHARS: int = 200_000
     DOCUMENT_OCR_MAX_PAGES: int = 6
-    DOCUMENT_ANALYSIS_MODEL: Optional[str] = None
+    DOCUMENT_ANALYSIS_MODEL: Optional[str] = "qwen2.5vl"
+    GEMINI_API_KEY: Optional[str] = None
     DOCUMENT_ANALYSIS_API_BASE: str = "http://localhost:11434/v1"
     DOCUMENT_ANALYSIS_API_KEY: Optional[str] = "local"
     DOCUMENT_ANALYSIS_TIMEOUT_SECONDS: int = 120
@@ -36,7 +37,40 @@ class Settings(BaseSettings):
     def active_mongodb_url(self) -> str:
         return self.LOCAL_MONGODB_URL if self.USE_LOCAL_MONGODB else self.MONGODB_URL
 
+    @property
+    def active_ai_api_key(self) -> Optional[str]:
+        if self.GEMINI_API_KEY:
+            return self.GEMINI_API_KEY
+        return self.OPENAI_API_KEY
+
+    @property
+    def active_ai_api_base(self) -> str:
+        if self.GEMINI_API_KEY:
+            return "https://generativelanguage.googleapis.com/v1beta/openai/"
+        return self.OPENAI_API_BASE
+
+    @property
+    def active_ai_model(self) -> str:
+        if self.GEMINI_API_KEY:
+            if self.AI_MODEL == "grok-1" or "gemini" not in self.AI_MODEL.lower():
+                return "gemini-2.5-flash"
+        return self.AI_MODEL
+
+    @property
+    def active_document_analysis_api_key(self) -> Optional[str]:
+        if self.DOCUMENT_ANALYSIS_MODEL and "gemini" in self.DOCUMENT_ANALYSIS_MODEL.lower() and self.GEMINI_API_KEY:
+            return self.GEMINI_API_KEY
+        return self.DOCUMENT_ANALYSIS_API_KEY
+
+    @property
+    def active_document_analysis_api_base(self) -> str:
+        if self.DOCUMENT_ANALYSIS_MODEL and "gemini" in self.DOCUMENT_ANALYSIS_MODEL.lower() and self.GEMINI_API_KEY:
+            return "https://generativelanguage.googleapis.com/v1beta/openai/"
+        return self.DOCUMENT_ANALYSIS_API_BASE
+
     class Config:
         env_file = BACKEND_DIR / ".env"
+        extra = "ignore"
 
 settings = Settings()
+
