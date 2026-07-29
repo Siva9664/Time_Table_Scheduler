@@ -60,7 +60,7 @@ echo ""
 echo "[4/4] Starting Backend Server..."
 cd backend || exit
 source venv/bin/activate
-nohup python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 > ../backend.log 2>&1 &
+nohup python3 -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 > ../backend.log 2>&1 &
 BACKEND_PID=$!
 cd ..
 

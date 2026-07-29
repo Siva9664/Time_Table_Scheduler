@@ -1,11 +1,11 @@
-from ortools.sat.python import cp_model
-from typing import List, Dict, Any, Optional, Tuple
-from pymongo.database import Database
-from bson import ObjectId
-import time
 import logging
-from datetime import datetime, timedelta
 import re
+import time
+from typing import Any, Dict, List, Optional, Tuple
+
+from bson import ObjectId
+from ortools.sat.python import cp_model
+from pymongo.database import Database
 
 # Credit → contact hours/week mapping (industry standard for Indian universities)
 CREDITS_TO_HOURS: Dict[int, int] = {1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6}
@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 class _Obj:
     """Simple attribute-access wrapper around a MongoDB document dict."""
+
     def __init__(self, doc: dict):
         self._doc = doc
         # Expose string id
@@ -30,7 +31,14 @@ class _Obj:
 
 
 class TimetableScheduler:
-    def __init__(self, db: Database, working_days: List[str], periods_per_day: int, time_limit_seconds: int = 60, custom_constraints: List[Dict[str, Any]] = None):
+    def __init__(
+        self,
+        db: Database,
+        working_days: List[str],
+        periods_per_day: int,
+        time_limit_seconds: int = 60,
+        custom_constraints: List[Dict[str, Any]] = None,
+    ):
         self.db = db
         self.working_days = working_days
         self.periods_per_day = periods_per_day
@@ -48,26 +56,37 @@ class TimetableScheduler:
 
         # OR-Tools
         self.model = cp_model.CpModel()
-        self.variables = {}  # Map: "s{subject_id}_d{day_index}_p{period_index}" -> BoolVar
+        self.variables = (
+            {}
+        )  # Map: "s{subject_id}_d{day_index}_p{period_index}" -> BoolVar
 
         # Smart correction state
-        self._adjusted_hours: Dict[str, int] = {}   # subject_id -> corrected hours
-        self._credit_extra_capacities: Dict[str, int] = {}  # subject_id -> extra slots for free-period fill
-        self.auto_adjustments: List[str] = []        # human-readable auto-fix messages
-        self.constraint_warnings: List[str] = []     # soft-fail warnings from custom constraints
+        self._adjusted_hours: Dict[str, int] = {}  # subject_id -> corrected hours
+        self._credit_extra_capacities: Dict[str, int] = (
+            {}
+        )  # subject_id -> extra slots for free-period fill
+        self.auto_adjustments: List[str] = []  # human-readable auto-fix messages
+        self.constraint_warnings: List[str] = (
+            []
+        )  # soft-fail warnings from custom constraints
         self.specific_constrained_slots = set()
         self.specific_preference_slots = set()
 
         # Optimization Caches
-        self.vars_by_faculty = {}  # faculty_id -> day -> list of {'start', 'end', 'var', 'period'}
-        self.vars_by_room = {}  # room_id -> day -> list of {'start', 'end', 'var', 'period'}
+        self.vars_by_faculty = (
+            {}
+        )  # faculty_id -> day -> list of {'start', 'end', 'var', 'period'}
+        self.vars_by_room = (
+            {}
+        )  # room_id -> day -> list of {'start', 'end', 'var', 'period'}
         self.vars_by_subject = {}  # subject_id -> list of BoolVar
-        self.room_variables = {}  # Map: "s{subject_id}_d{day}_p{period}_r{room_id}" -> BoolVar
+        self.room_variables = (
+            {}
+        )  # Map: "s{subject_id}_d{day}_p{period}_r{room_id}" -> BoolVar
         self.empty_slot_vars = []
         self.subject_by_id = {}
         self.room_by_id = {}
         self._candidate_rooms_cache: Dict[str, List[_Obj]] = {}
-
 
     def _wrap(self, doc: dict) -> _Obj:
         return _Obj(doc)
@@ -82,13 +101,23 @@ class TimetableScheduler:
         # Attach batch
         batch_id = doc.get("batch_id")
         if batch_id:
-            batch_doc = self.db["batches"].find_one({"_id": ObjectId(batch_id)}) if ObjectId.is_valid(batch_id) else None
+            batch_doc = (
+                self.db["batches"].find_one({"_id": ObjectId(batch_id)})
+                if ObjectId.is_valid(batch_id)
+                else None
+            )
             obj._doc["_batch_obj"] = _Obj(batch_doc) if batch_doc else None
         else:
             obj._doc["_batch_obj"] = None
         return obj
 
-    def load_data(self, department_ids: Optional[List[str]] = None, batch_ids: Optional[List[str]] = None, class_ids: Optional[List[str]] = None, faculty_ids: Optional[List[str]] = None):
+    def load_data(
+        self,
+        department_ids: Optional[List[str]] = None,
+        batch_ids: Optional[List[str]] = None,
+        class_ids: Optional[List[str]] = None,
+        faculty_ids: Optional[List[str]] = None,
+    ):
         """Loads all necessary data from MongoDB."""
         logger.info("Step 1/5: Loading data from database...")
 
@@ -97,7 +126,9 @@ class TimetableScheduler:
         if department_ids:
             oids = [ObjectId(d) for d in department_ids if ObjectId.is_valid(d)]
             dept_query = {"_id": {"$in": oids}}
-        self.departments = [self._wrap(d) for d in self.db["departments"].find(dept_query)]
+        self.departments = [
+            self._wrap(d) for d in self.db["departments"].find(dept_query)
+        ]
         dept_ids_str = [dep.id for dep in self.departments]
 
         # Batches
@@ -114,39 +145,64 @@ class TimetableScheduler:
             class_query = {"_id": {"$in": oids}}
         elif dept_ids_str:
             class_query = {"department_id": {"$in": dept_ids_str}}
-        self.classes = [self._wrap_class(d) for d in self.db["classes"].find(class_query)]
+        self.classes = [
+            self._wrap_class(d) for d in self.db["classes"].find(class_query)
+        ]
         loaded_class_ids = [c.id for c in self.classes]
         self.class_map = {self._id_str(c.id): c for c in self.classes}
 
         room_query = {}
         if dept_ids_str:
-            room_query = {"$or": [
-                {"department_id": {"$in": dept_ids_str}},
-                {"department_id": None},
-                {"department_id": ""},
-                {"department_id": {"$exists": False}},
-            ]}
+            room_query = {
+                "$or": [
+                    {"department_id": {"$in": dept_ids_str}},
+                    {"department_id": None},
+                    {"department_id": ""},
+                    {"department_id": {"$exists": False}},
+                ]
+            }
         self.rooms = [self._wrap(d) for d in self.db["rooms"].find(room_query)]
         self.room_by_id = {self._id_str(r.id): r for r in self.rooms}
 
         # Subjects (linked to loaded classes)
         if loaded_class_ids:
-            self.subjects = [self._wrap(d) for d in self.db["subjects"].find({"class_id": {"$in": loaded_class_ids}})]
+            self.subjects = [
+                self._wrap(d)
+                for d in self.db["subjects"].find(
+                    {"class_id": {"$in": loaded_class_ids}}
+                )
+            ]
         else:
             self.subjects = []
         self.subject_by_id = {self._id_str(s.id): s for s in self.subjects}
 
         # Faculty
-        assigned_faculty_ids = {self._id_str(s.faculty_id) for s in self.subjects if s.faculty_id}
+        assigned_faculty_ids = {
+            self._id_str(s.faculty_id) for s in self.subjects if s.faculty_id
+        }
         if faculty_ids:
             all_ids = set(faculty_ids) | assigned_faculty_ids
             oids = [ObjectId(f) for f in all_ids if ObjectId.is_valid(f)]
             fac_query = {"_id": {"$in": oids}}
         elif dept_ids_str:
-            fac_query = {"$or": [
-                {"department_id": {"$in": dept_ids_str}},
-                {"_id": {"$in": [ObjectId(f) for f in assigned_faculty_ids if ObjectId.is_valid(f)]}}
-            ]} if assigned_faculty_ids else {"department_id": {"$in": dept_ids_str}}
+            fac_query = (
+                {
+                    "$or": [
+                        {"department_id": {"$in": dept_ids_str}},
+                        {
+                            "_id": {
+                                "$in": [
+                                    ObjectId(f)
+                                    for f in assigned_faculty_ids
+                                    if ObjectId.is_valid(f)
+                                ]
+                            }
+                        },
+                    ]
+                }
+                if assigned_faculty_ids
+                else {"department_id": {"$in": dept_ids_str}}
+            )
         else:
             fac_query = {}
         self.faculty = [self._wrap(d) for d in self.db["faculty"].find(fac_query)]
@@ -167,10 +223,12 @@ class TimetableScheduler:
                         class_name = c.get("class_name")
                         if class_name:
                             class_obj = self.class_map.get(self._id_str(sub.class_id))
-                            if class_obj and not self._matches_class(class_name, class_obj):
+                            if class_obj and not self._matches_class(
+                                class_name, class_obj
+                            ):
                                 continue
                         num_slots += 1
-            
+
             if num_slots > 0:
                 current_hours = self._effective_hours(sub)
                 if num_slots > current_hours:
@@ -182,9 +240,12 @@ class TimetableScheduler:
                     )
 
         summary = {
-            "departments": len(self.departments), "batches": len(self.batches),
-            "classes": len(self.classes), "subjects": len(self.subjects),
-            "faculty": len(self.faculty), "rooms": len(self.rooms)
+            "departments": len(self.departments),
+            "batches": len(self.batches),
+            "classes": len(self.classes),
+            "subjects": len(self.subjects),
+            "faculty": len(self.faculty),
+            "rooms": len(self.rooms),
         }
         logger.info(f"Data Loaded: {summary}")
         return summary
@@ -205,7 +266,9 @@ class TimetableScheduler:
     def _room_type(self, room: _Obj) -> str:
         return str(room.room_type or "lecture").strip().lower()
 
-    def _room_change_reason(self, subject: _Obj, class_obj: _Obj, assigned_room: Optional[_Obj]) -> Optional[str]:
+    def _room_change_reason(
+        self, subject: _Obj, class_obj: _Obj, assigned_room: Optional[_Obj]
+    ) -> Optional[str]:
         if not assigned_room or not class_obj or not class_obj.room_id:
             return None
 
@@ -227,7 +290,11 @@ class TimetableScheduler:
 
             if self._room_type(default_room) == "lab":
                 return "home_room_is_lab"
-            if default_capacity is not None and student_count and default_capacity < student_count:
+            if (
+                default_capacity is not None
+                and student_count
+                and default_capacity < student_count
+            ):
                 return "home_room_capacity"
 
         return "home_room_unavailable"
@@ -267,8 +334,11 @@ class TimetableScheduler:
 
         if subject.requires_lab and not viable:
             viable = [
-                room for room in self.rooms
-                if self._room_capacity(room) is None or not student_count or self._room_capacity(room) >= student_count
+                room
+                for room in self.rooms
+                if self._room_capacity(room) is None
+                or not student_count
+                or self._room_capacity(room) >= student_count
             ]
             if viable:
                 self._constraint_error(
@@ -277,7 +347,9 @@ class TimetableScheduler:
 
         if default_room and default_room not in viable and not subject.requires_lab:
             capacity = self._room_capacity(default_room)
-            if self._room_type(default_room) != "lab" and (capacity is None or not student_count or capacity >= student_count):
+            if self._room_type(default_room) != "lab" and (
+                capacity is None or not student_count or capacity >= student_count
+            ):
                 viable.insert(0, default_room)
 
         if not viable:
@@ -290,7 +362,7 @@ class TimetableScheduler:
 
     def _parse_time(self, time_str: str) -> int:
         """Converts HH:MM string to minutes from midnight."""
-        h, m = map(int, time_str.split(':'))
+        h, m = map(int, time_str.split(":"))
         return h * 60 + m
 
     def _format_time(self, minutes: int) -> str:
@@ -306,7 +378,9 @@ class TimetableScheduler:
     def _format_time_range(self, start: int, end: int) -> str:
         return f"{self._format_display_time(start)} - {self._format_display_time(end)}"
 
-    def _slot_blocks_day(self, slot: Dict[str, Any], day_idx: int, day_name: str) -> bool:
+    def _slot_blocks_day(
+        self, slot: Dict[str, Any], day_idx: int, day_name: str
+    ) -> bool:
         slot_day = slot.get("day") or slot.get("day_name")
         if slot_day and str(slot_day).lower() == day_name.lower():
             return True
@@ -320,7 +394,9 @@ class TimetableScheduler:
 
         return not slot_day
 
-    def _slot_blocks_period(self, slot: Dict[str, Any], period_idx: int, start: int, end: int) -> bool:
+    def _slot_blocks_period(
+        self, slot: Dict[str, Any], period_idx: int, start: int, end: int
+    ) -> bool:
         period_value = slot.get("period")
         if period_value is not None:
             try:
@@ -347,11 +423,21 @@ class TimetableScheduler:
 
         return True
 
-    def _is_faculty_unavailable(self, faculty: _Obj, day_idx: int, day_name: str, period_idx: int, start: int, end: int) -> bool:
+    def _is_faculty_unavailable(
+        self,
+        faculty: _Obj,
+        day_idx: int,
+        day_name: str,
+        period_idx: int,
+        start: int,
+        end: int,
+    ) -> bool:
         for slot in faculty.unavailable_slots or []:
             if not isinstance(slot, dict):
                 continue
-            if self._slot_blocks_day(slot, day_idx, day_name) and self._slot_blocks_period(slot, period_idx, start, end):
+            if self._slot_blocks_day(
+                slot, day_idx, day_name
+            ) and self._slot_blocks_period(slot, period_idx, start, end):
                 return True
         return False
 
@@ -362,7 +448,11 @@ class TimetableScheduler:
         tokens = [token for token in target_name.split() if token]
         for fac in self.faculty:
             faculty_name = self._normalize_match_text(fac.name)
-            if target_name == faculty_name or target_name in faculty_name or faculty_name in target_name:
+            if (
+                target_name == faculty_name
+                or target_name in faculty_name
+                or faculty_name in target_name
+            ):
                 return fac
             if tokens and all(token in faculty_name for token in tokens):
                 return fac
@@ -420,7 +510,8 @@ class TimetableScheduler:
         capacities: Dict[str, int] = {}
         for class_obj in self.classes:
             class_subjects = [
-                sub for sub in self.subjects
+                sub
+                for sub in self.subjects
                 if self._id_str(sub.class_id) == self._id_str(class_obj.id)
             ]
             if not class_subjects:
@@ -429,13 +520,17 @@ class TimetableScheduler:
             usable_slots = 0
             for day in range(self.num_days):
                 for period in range(self.periods_per_day):
-                    if any(f"s{sub.id}_d{day}_p{period}" in self.variables for sub in class_subjects):
+                    if any(
+                        f"s{sub.id}_d{day}_p{period}" in self.variables
+                        for sub in class_subjects
+                    ):
                         usable_slots += 1
 
             required_slots = sum(self._effective_hours(sub) for sub in class_subjects)
             free_slots = max(0, usable_slots - required_slots)
             theory_subjects = [
-                sub for sub in class_subjects
+                sub
+                for sub in class_subjects
                 if not sub.requires_lab and self.vars_by_subject.get(sub.id)
             ]
             if free_slots <= 0 or not theory_subjects:
@@ -443,7 +538,10 @@ class TimetableScheduler:
 
             allocations = {self._id_str(sub.id): 0 for sub in theory_subjects}
             remaining = free_slots
-            for sub in sorted(theory_subjects, key=lambda s: (-self._credit_value(s), s.name or "", s.code or "")):
+            for sub in sorted(
+                theory_subjects,
+                key=lambda s: (-self._credit_value(s), s.name or "", s.code or ""),
+            ):
                 if remaining <= 0:
                     break
                 sub_id = self._id_str(sub.id)
@@ -471,14 +569,16 @@ class TimetableScheduler:
             return True
         target_tokens = target.split()
         candidate_tokens = candidate.split()
-        
+
         # Distinguish labs from theory
         is_target_lab = "lab" in target_tokens
         is_candidate_lab = "lab" in candidate_tokens
         if is_target_lab != is_candidate_lab:
             return False
-            
-        return bool(target_tokens) and all(token in candidate_tokens for token in target_tokens)
+
+        return bool(target_tokens) and all(
+            token in candidate_tokens for token in target_tokens
+        )
 
     def _subject_target_variants(self, target: str) -> List[str]:
         """
@@ -500,7 +600,10 @@ class TimetableScheduler:
                 variants.append(prefix)
 
         normalized_variants = {self._normalize_match_text(value) for value in variants}
-        if any("fcv" in value.split() and "lab" in value.split() for value in normalized_variants):
+        if any(
+            "fcv" in value.split() and "lab" in value.split()
+            for value in normalized_variants
+        ):
             for alias in ("CV Lab", "Computer Vision Lab"):
                 if alias not in variants:
                     variants.append(alias)
@@ -523,7 +626,9 @@ class TimetableScheduler:
                 return False
             target_tokens = [token for token in target_tokens if token != "lab"]
             candidate_tokens = [token for token in candidate_tokens if token != "lab"]
-            return bool(target_tokens) and all(token in candidate_tokens for token in target_tokens)
+            return bool(target_tokens) and all(
+                token in candidate_tokens for token in target_tokens
+            )
 
         if candidate_is_lab:
             return False
@@ -542,10 +647,9 @@ class TimetableScheduler:
 
     def _matches_subject(self, target: str, subject: _Obj) -> bool:
         for variant in self._subject_target_variants(target):
-            if (
-                self._matches_subject_text(variant, subject.name, subject)
-                or self._matches_subject_text(variant, subject.code, subject)
-            ):
+            if self._matches_subject_text(
+                variant, subject.name, subject
+            ) or self._matches_subject_text(variant, subject.code, subject):
                 return True
         return False
 
@@ -555,22 +659,30 @@ class TimetableScheduler:
         if not subject_name and not subject_code:
             return False
 
-        subject = _Obj({
-            "_id": slot.get("subject_id") or "schedule-slot",
-            "name": subject_name,
-            "code": subject_code,
-            "requires_lab": bool(slot.get("is_lab")),
-        })
+        subject = _Obj(
+            {
+                "_id": slot.get("subject_id") or "schedule-slot",
+                "name": subject_name,
+                "code": subject_code,
+                "requires_lab": bool(slot.get("is_lab")),
+            }
+        )
         return self._matches_subject(target, subject)
 
     def _subjects_for_class_target(self, target: str) -> List[_Obj]:
-        class_ids = {self._id_str(cls.id) for cls in self.classes if self._matches_class(target, cls)}
+        class_ids = {
+            self._id_str(cls.id)
+            for cls in self.classes
+            if self._matches_class(target, cls)
+        }
         return [sub for sub in self.subjects if self._id_str(sub.class_id) in class_ids]
 
-    def _subjects_for_target(self, target: str, target_type: str = "subject") -> List[_Obj]:
+    def _subjects_for_target(
+        self, target: str, target_type: str = "subject"
+    ) -> List[_Obj]:
         if target_type == "class":
             return self._subjects_for_class_target(target)
-            
+
         target_variants = self._subject_target_variants(target)
         if not target_variants:
             return []
@@ -583,8 +695,10 @@ class TimetableScheduler:
                 continue
             target_is_lab = "lab" in target_norm.split()
             exact_matches = [
-                sub for sub in self.subjects
-                if self._normalize_match_text(sub.name) == target_norm or self._normalize_match_text(sub.code) == target_norm
+                sub
+                for sub in self.subjects
+                if self._normalize_match_text(sub.name) == target_norm
+                or self._normalize_match_text(sub.code) == target_norm
             ]
             if exact_matches and not target_is_lab:
                 exact_matches = [sub for sub in exact_matches if not sub.requires_lab]
@@ -602,8 +716,10 @@ class TimetableScheduler:
         if "lab" in target_tokens:
             base_target = " ".join(token for token in target_tokens if token != "lab")
             fallback_matches = [
-                sub for sub in self.subjects
-                if self._matches_text(base_target, sub.name) or self._matches_text(base_target, sub.code)
+                sub
+                for sub in self.subjects
+                if self._matches_text(base_target, sub.name)
+                or self._matches_text(base_target, sub.code)
             ]
             if fallback_matches:
                 message = (
@@ -636,7 +752,8 @@ class TimetableScheduler:
                 if self._matches_class(class_name, cls)
             }
             matched_subjects = [
-                sub for sub in matched_subjects
+                sub
+                for sub in matched_subjects
                 if self._id_str(sub.class_id) in matching_class_ids
             ]
         return matched_subjects
@@ -646,7 +763,9 @@ class TimetableScheduler:
         self.constraint_warnings.append(message)
         logger.warning(message)
 
-    def _calculate_class_period_intervals(self, class_obj: _Obj, max_periods: Optional[int] = None) -> List[Tuple[int, int]]:
+    def _calculate_class_period_intervals(
+        self, class_obj: _Obj, max_periods: Optional[int] = None
+    ) -> List[Tuple[int, int]]:
         """
         Returns a list of (start_minute, end_minute) for each period of the day for this class.
         Based on the class's Batch configuration.
@@ -662,28 +781,40 @@ class TimetableScheduler:
             return intervals
 
         day_start = self._parse_time(batch.start_time)
-        day_end = self._parse_time(batch.end_time) if batch.end_time else day_start + (self.periods_per_day * (batch.period_duration or 60))
+        day_end = (
+            self._parse_time(batch.end_time)
+            if batch.end_time
+            else day_start + (self.periods_per_day * (batch.period_duration or 60))
+        )
         period_duration = batch.period_duration or 60
         break_slots = [
-            slot for slot in self._get_class_break_slots(class_obj)
-            if slot["start"] < day_end and slot["end"] > day_start and slot["end"] > slot["start"]
+            slot
+            for slot in self._get_class_break_slots(class_obj)
+            if slot["start"] < day_end
+            and slot["end"] > day_start
+            and slot["end"] > slot["start"]
         ]
 
         intervals = []
         current_time = day_start
 
-        while (max_periods is None or len(intervals) < max_periods) and current_time + period_duration <= day_end:
+        while (
+            max_periods is None or len(intervals) < max_periods
+        ) and current_time + period_duration <= day_end:
             active_break = next(
-                (slot for slot in break_slots if slot["start"] <= current_time < slot["end"]),
-                None
+                (
+                    slot
+                    for slot in break_slots
+                    if slot["start"] <= current_time < slot["end"]
+                ),
+                None,
             )
             if active_break:
                 current_time = active_break["end"]
                 continue
 
             next_break = next(
-                (slot for slot in break_slots if slot["start"] >= current_time),
-                None
+                (slot for slot in break_slots if slot["start"] >= current_time), None
             )
 
             if next_break and current_time + period_duration > next_break["start"]:
@@ -721,7 +852,9 @@ class TimetableScheduler:
         ]
         if calculated_counts:
             self.periods_per_day = max(calculated_counts)
-            logger.info(f"Effective periods per day calculated from batch timings: {self.periods_per_day}")
+            logger.info(
+                f"Effective periods per day calculated from batch timings: {self.periods_per_day}"
+            )
 
     def _get_class_break_slots(self, class_obj: _Obj) -> List[Dict[str, Any]]:
         batch = class_obj._doc.get("_batch_obj")
@@ -734,36 +867,44 @@ class TimetableScheduler:
             end = break_time.get("end")
             if not start or not end:
                 continue
-            break_slots.append({
-                "slot_type": "break",
-                "break_type": "break",
-                "label": f"Break {idx}",
-                "start": self._parse_time(start),
-                "end": self._parse_time(end),
-            })
+            break_slots.append(
+                {
+                    "slot_type": "break",
+                    "break_type": "break",
+                    "label": f"Break {idx}",
+                    "start": self._parse_time(start),
+                    "end": self._parse_time(end),
+                }
+            )
 
         lunch_break = batch.lunch_break or {}
         if lunch_break.get("start") and lunch_break.get("end"):
-            break_slots.append({
-                "slot_type": "break",
-                "break_type": "lunch",
-                "label": "Lunch",
-                "start": self._parse_time(lunch_break["start"]),
-                "end": self._parse_time(lunch_break["end"]),
-            })
+            break_slots.append(
+                {
+                    "slot_type": "break",
+                    "break_type": "lunch",
+                    "label": "Lunch",
+                    "start": self._parse_time(lunch_break["start"]),
+                    "end": self._parse_time(lunch_break["end"]),
+                }
+            )
 
         return sorted(break_slots, key=lambda slot: (slot["start"], slot["end"]))
 
     def _get_class_timeline_slots(self, class_obj: _Obj) -> List[Dict[str, Any]]:
         timeline = []
-        for period_idx, (start, end) in enumerate(self._get_class_period_intervals(class_obj)):
-            timeline.append({
-                "slot_type": "period",
-                "period_index": period_idx,
-                "period": period_idx + 1,
-                "start": start,
-                "end": end,
-            })
+        for period_idx, (start, end) in enumerate(
+            self._get_class_period_intervals(class_obj)
+        ):
+            timeline.append(
+                {
+                    "slot_type": "period",
+                    "period_index": period_idx,
+                    "period": period_idx + 1,
+                    "start": start,
+                    "end": end,
+                }
+            )
 
         timeline.extend(self._get_class_break_slots(class_obj))
         return sorted(
@@ -772,18 +913,27 @@ class TimetableScheduler:
                 slot["start"],
                 0 if slot.get("slot_type") == "break" else 1,
                 slot["end"],
-            )
+            ),
         )
 
     def create_variables(self):
         """Creates boolean variables: X[subject, day, period]"""
         logger.info("Step 2/5: Creating decision variables...")
 
-        class_timings = {self._id_str(c.id): self._get_class_period_intervals(c) for c in self.classes}
+        class_timings = {
+            self._id_str(c.id): self._get_class_period_intervals(c)
+            for c in self.classes
+        }
         faculty_map = {self._id_str(f.id): f for f in self.faculty}
 
-        self.vars_by_faculty = {self._id_str(f.id): {d: [] for d in range(self.num_days)} for f in self.faculty}
-        self.vars_by_room = {self._id_str(r.id): {d: [] for d in range(self.num_days)} for r in self.rooms}
+        self.vars_by_faculty = {
+            self._id_str(f.id): {d: [] for d in range(self.num_days)}
+            for f in self.faculty
+        }
+        self.vars_by_room = {
+            self._id_str(r.id): {d: [] for d in range(self.num_days)}
+            for r in self.rooms
+        }
         self.vars_by_subject = {}
 
         for subject in self.subjects:
@@ -801,14 +951,22 @@ class TimetableScheduler:
                         continue
                     start, end = c_intervals[period]
                     faculty = faculty_map.get(subject_faculty_id)
-                    if faculty and self._is_faculty_unavailable(faculty, day, self.working_days[day], period, start, end):
+                    if faculty and self._is_faculty_unavailable(
+                        faculty, day, self.working_days[day], period, start, end
+                    ):
                         continue
 
                     var_name = f"s{subject.id}_d{day}_p{period}"
                     var = self.model.NewBoolVar(var_name)
                     self.variables[var_name] = var
 
-                    entry = {'start': start, 'end': end, 'var': var, 'period': period, 'subject_id': subject.id}
+                    entry = {
+                        "start": start,
+                        "end": end,
+                        "var": var,
+                        "period": period,
+                        "subject_id": subject.id,
+                    }
                     if subject_faculty_id in self.vars_by_faculty:
                         self.vars_by_faculty[subject_faculty_id][day].append(entry)
 
@@ -823,14 +981,16 @@ class TimetableScheduler:
                         room_vars.append(room_var)
                         self.model.Add(room_var <= var)
                         if room_id in self.vars_by_room:
-                            self.vars_by_room[room_id][day].append({
-                                'start': start,
-                                'end': end,
-                                'var': room_var,
-                                'period': period,
-                                'subject_id': subject.id,
-                                'room_id': room_id,
-                            })
+                            self.vars_by_room[room_id][day].append(
+                                {
+                                    "start": start,
+                                    "end": end,
+                                    "var": room_var,
+                                    "period": period,
+                                    "subject_id": subject.id,
+                                    "room_id": room_id,
+                                }
+                            )
                     if room_vars:
                         self.model.Add(sum(room_vars) == var)
 
@@ -846,7 +1006,10 @@ class TimetableScheduler:
         specific_preference_slots = set()
         if self.custom_constraints:
             for c in self.custom_constraints:
-                if c.get("type") in {"specific_time_slot", "specific_time_slot_any"} and c.get("target_type", "subject") == "subject":
+                if (
+                    c.get("type") in {"specific_time_slot", "specific_time_slot_any"}
+                    and c.get("target_type", "subject") == "subject"
+                ):
                     target = str(c.get("target", ""))
                     targets = c.get("targets") or [target]
                     period_num = c.get("period")
@@ -856,10 +1019,19 @@ class TimetableScheduler:
                             p_idx = int(period_num) - 1
                         except (TypeError, ValueError):
                             continue
-                        day_idx = next((i for i, d in enumerate(self.working_days) if d.lower() == day_name.lower()), None)
+                        day_idx = next(
+                            (
+                                i
+                                for i, d in enumerate(self.working_days)
+                                if d.lower() == day_name.lower()
+                            ),
+                            None,
+                        )
                         if day_idx is not None:
                             class_name = c.get("class_name")
-                            matched_subjects = self._subjects_for_constraint_targets(targets, "subject", class_name)
+                            matched_subjects = self._subjects_for_constraint_targets(
+                                targets, "subject", class_name
+                            )
                             for sub in matched_subjects:
                                 slot = (sub.id, day_idx, p_idx)
                                 specific_constrained_slots.add(slot)
@@ -902,22 +1074,40 @@ class TimetableScheduler:
                         specific_slots_count = 0
                         if self.custom_constraints:
                             for c in self.custom_constraints:
-                                if c.get("type") in {"specific_time_slot", "specific_time_slot_any"} and c.get("target_type", "subject") == "subject":
+                                if (
+                                    c.get("type")
+                                    in {"specific_time_slot", "specific_time_slot_any"}
+                                    and c.get("target_type", "subject") == "subject"
+                                ):
                                     targets = c.get("targets") or [c.get("target", "")]
-                                    if any(self._matches_subject(target, subject) for target in targets) and c.get("day", "").lower() == day_name:
+                                    if (
+                                        any(
+                                            self._matches_subject(target, subject)
+                                            for target in targets
+                                        )
+                                        and c.get("day", "").lower() == day_name
+                                    ):
                                         class_name = c.get("class_name")
                                         if not class_name:
                                             specific_slots_count += 1
                                         else:
-                                            class_obj = self.class_map.get(self._id_str(subject.class_id))
-                                            if class_obj and self._matches_class(class_name, class_obj):
+                                            class_obj = self.class_map.get(
+                                                self._id_str(subject.class_id)
+                                            )
+                                            if class_obj and self._matches_class(
+                                                class_name, class_obj
+                                            ):
                                                 specific_slots_count += 1
                         limit = max(2, specific_slots_count)
                         self.model.Add(sum(day_vars) <= limit)
 
         # 2. Class occupancy: prefer exactly one subject in every usable class slot.
         for class_obj in self.classes:
-            class_subjects = [s for s in self.subjects if self._id_str(s.class_id) == self._id_str(class_obj.id)]
+            class_subjects = [
+                s
+                for s in self.subjects
+                if self._id_str(s.class_id) == self._id_str(class_obj.id)
+            ]
             for day in range(self.num_days):
                 for period in range(self.periods_per_day):
                     slot_vars = []
@@ -926,33 +1116,38 @@ class TimetableScheduler:
                         if key in self.variables:
                             slot_vars.append(self.variables[key])
                     if slot_vars:
-                        empty_slot = self.model.NewBoolVar(f"empty_c{class_obj.id}_d{day}_p{period}")
+                        empty_slot = self.model.NewBoolVar(
+                            f"empty_c{class_obj.id}_d{day}_p{period}"
+                        )
                         self.model.Add(sum(slot_vars) + empty_slot == 1)
                         self.empty_slot_vars.append(empty_slot)
         logger.debug("Added Class Occupancy constraints")
 
         # 3. RESOURCE CONFLICTS (Optimized)
         def is_allowed_shared_fixed_slot(e1, e2, day):
-            if e1.get('period') != e2.get('period'):
+            if e1.get("period") != e2.get("period"):
                 return False
 
-            slot1 = (e1.get('subject_id'), day, e1.get('period'))
-            slot2 = (e2.get('subject_id'), day, e2.get('period'))
-            if slot1 not in self.specific_constrained_slots or slot2 not in self.specific_constrained_slots:
+            slot1 = (e1.get("subject_id"), day, e1.get("period"))
+            slot2 = (e2.get("subject_id"), day, e2.get("period"))
+            if (
+                slot1 not in self.specific_constrained_slots
+                or slot2 not in self.specific_constrained_slots
+            ):
                 return False
 
-            sub1 = self.subject_by_id.get(self._id_str(e1.get('subject_id')))
-            sub2 = self.subject_by_id.get(self._id_str(e2.get('subject_id')))
+            sub1 = self.subject_by_id.get(self._id_str(e1.get("subject_id")))
+            sub2 = self.subject_by_id.get(self._id_str(e2.get("subject_id")))
             if not sub1 or not sub2:
                 return False
 
-            same_subject = (
-                self._normalize_match_text(sub1.name) == self._normalize_match_text(sub2.name)
-                or (
-                    sub1.code
-                    and sub2.code
-                    and self._normalize_match_text(sub1.code) == self._normalize_match_text(sub2.code)
-                )
+            same_subject = self._normalize_match_text(
+                sub1.name
+            ) == self._normalize_match_text(sub2.name) or (
+                sub1.code
+                and sub2.code
+                and self._normalize_match_text(sub1.code)
+                == self._normalize_match_text(sub2.code)
             )
             return same_subject and not sub1.requires_lab and not sub2.requires_lab
 
@@ -966,10 +1161,10 @@ class TimetableScheduler:
                         e1 = entries[i]
                         for j in range(i + 1, len(entries)):
                             e2 = entries[j]
-                            if e1['start'] < e2['end'] and e2['start'] < e1['end']:
+                            if e1["start"] < e2["end"] and e2["start"] < e1["end"]:
                                 if is_allowed_shared_fixed_slot(e1, e2, day):
                                     continue
-                                self.model.Add(e1['var'] + e2['var'] <= 1)
+                                self.model.Add(e1["var"] + e2["var"] <= 1)
 
         add_overlap_constraints(self.vars_by_faculty, "Faculty")
         logger.debug("Added Resource Conflict (Faculty) constraints")
@@ -990,11 +1185,13 @@ class TimetableScheduler:
                     for room in candidate_rooms:
                         key = f"s{sub.id}_d{day}_p{period}_r{room.id}"
                         if key in self.room_variables:
-                            room_period_vars.setdefault(self._id_str(room.id), []).append((period, self.room_variables[key]))
+                            room_period_vars.setdefault(
+                                self._id_str(room.id), []
+                            ).append((period, self.room_variables[key]))
 
                 room_ids = list(room_period_vars.keys())
                 for i, room_id in enumerate(room_ids):
-                    for other_room_id in room_ids[i + 1:]:
+                    for other_room_id in room_ids[i + 1 :]:
                         for _, first_var in room_period_vars[room_id]:
                             for _, second_var in room_period_vars[other_room_id]:
                                 self.model.Add(first_var + second_var <= 1)
@@ -1011,11 +1208,16 @@ class TimetableScheduler:
                 c.get("type") in {"specific_time_slot", "specific_time_slot_any"}
                 and c.get("target_type", "subject") == "subject"
                 and self._is_hard_specific_constraint(c)
-                and any(self._matches_subject(target, sub) for target in (c.get("targets") or [c.get("target", "")]))
+                and any(
+                    self._matches_subject(target, sub)
+                    for target in (c.get("targets") or [c.get("target", "")])
+                )
                 for c in self.custom_constraints
             )
             if has_specific_slots:
-                logger.info(f"Bypassing default lab constraints for '{sub.name}' due to specific_time_slot constraints")
+                logger.info(
+                    f"Bypassing default lab constraints for '{sub.name}' due to specific_time_slot constraints"
+                )
                 continue
 
             hours = self._effective_hours(sub)
@@ -1032,9 +1234,13 @@ class TimetableScheduler:
                 period_vars = []
                 for period in range(self.periods_per_day):
                     key = f"s{sub.id}_d{day}_p{period}"
-                    period_vars.append(self.variables[key] if key in self.variables else None)
+                    period_vars.append(
+                        self.variables[key] if key in self.variables else None
+                    )
 
-                valid_periods = [(p, v) for p, v in enumerate(period_vars) if v is not None]
+                valid_periods = [
+                    (p, v) for p, v in enumerate(period_vars) if v is not None
+                ]
                 all_day_vars = [v for _, v in valid_periods]
 
                 if not all_day_vars:
@@ -1080,17 +1286,25 @@ class TimetableScheduler:
             # ── faculty_availability ───────────────────────────────────────────
             if c_type == "faculty_availability":
                 f_name = constraint.get("faculty_name", "")
-                allowed_days = [d.lower() for d in constraint.get("available_days", []) if isinstance(d, str)]
+                allowed_days = [
+                    d.lower()
+                    for d in constraint.get("available_days", [])
+                    if isinstance(d, str)
+                ]
                 target_fac = self._find_faculty_by_name(f_name)
                 if target_fac:
                     for day_idx, day_name in enumerate(self.working_days):
                         if day_name.lower() not in allowed_days:
-                            entries = self.vars_by_faculty.get(self._id_str(target_fac.id), {}).get(day_idx, [])
+                            entries = self.vars_by_faculty.get(
+                                self._id_str(target_fac.id), {}
+                            ).get(day_idx, [])
                             for e in entries:
-                                self.model.Add(e['var'] == 0)
+                                self.model.Add(e["var"] == 0)
                     logger.debug(f"Applied faculty_availability for '{f_name}'")
                 else:
-                    self._constraint_error(f"faculty_availability: faculty '{f_name}' not found in loaded data")
+                    self._constraint_error(
+                        f"faculty_availability: faculty '{f_name}' not found in loaded data"
+                    )
 
             # ── faculty_time_unavailability ────────────────────────────────────
             elif c_type == "faculty_time_unavailability":
@@ -1103,21 +1317,31 @@ class TimetableScheduler:
                         s_min = self._parse_time(start_time)
                         e_min = self._parse_time(end_time)
                         for day_idx, day_name in enumerate(self.working_days):
-                            entries = self.vars_by_faculty.get(self._id_str(target_fac.id), {}).get(day_idx, [])
+                            entries = self.vars_by_faculty.get(
+                                self._id_str(target_fac.id), {}
+                            ).get(day_idx, [])
                             for e in entries:
-                                if e['start'] < e_min and s_min < e['end']:
-                                    self.model.Add(e['var'] == 0)
-                        logger.debug(f"Applied faculty_time_unavailability for '{f_name}' ({start_time}-{end_time})")
+                                if e["start"] < e_min and s_min < e["end"]:
+                                    self.model.Add(e["var"] == 0)
+                        logger.debug(
+                            f"Applied faculty_time_unavailability for '{f_name}' ({start_time}-{end_time})"
+                        )
                     except Exception as ex:
-                        self._constraint_error(f"faculty_time_unavailability: invalid time format {ex}")
+                        self._constraint_error(
+                            f"faculty_time_unavailability: invalid time format {ex}"
+                        )
                 else:
-                    self._constraint_error(f"faculty_time_unavailability: target '{f_name}' not found or missing times")
+                    self._constraint_error(
+                        f"faculty_time_unavailability: target '{f_name}' not found or missing times"
+                    )
 
             # ── subject_max_per_day ────────────────────────────────────────────
             elif c_type == "subject_max_per_day":
                 sub_name = str(constraint.get("subject_name", ""))
                 max_pd = int(constraint.get("max_per_day", 1))
-                matched_subjects = [sub for sub in self.subjects if self._matches_subject(sub_name, sub)]
+                matched_subjects = [
+                    sub for sub in self.subjects if self._matches_subject(sub_name, sub)
+                ]
                 for sub in matched_subjects:
                     for day in range(self.num_days):
                         day_vars = [
@@ -1128,9 +1352,13 @@ class TimetableScheduler:
                         if day_vars:
                             self.model.Add(sum(day_vars) <= max_pd)
                 if matched_subjects:
-                    logger.debug(f"Applied subject_max_per_day for '{sub_name}' (max={max_pd})")
+                    logger.debug(
+                        f"Applied subject_max_per_day for '{sub_name}' (max={max_pd})"
+                    )
                 else:
-                    self._constraint_error(f"subject_max_per_day: subject '{sub_name}' not found in loaded data")
+                    self._constraint_error(
+                        f"subject_max_per_day: subject '{sub_name}' not found in loaded data"
+                    )
 
             # ── preferred_time_slot ────────────────────────────────────────────
             elif c_type == "preferred_time_slot":
@@ -1138,7 +1366,9 @@ class TimetableScheduler:
                 target_type = str(constraint.get("target_type", "subject")).lower()
                 pref = str(constraint.get("preference", "morning")).lower()
                 if constraint.get("soft"):
-                    logger.debug(f"Skipped soft preferred_time_slot for '{target}' ({target_type}) -> {pref}")
+                    logger.debug(
+                        f"Skipped soft preferred_time_slot for '{target}' ({target_type}) -> {pref}"
+                    )
                     continue
                 half = self.periods_per_day // 2
 
@@ -1154,8 +1384,16 @@ class TimetableScheduler:
                 matched_subjects = self._subjects_for_target(target, target_type)
                 class_name = constraint.get("class_name")
                 if class_name:
-                    matching_class_ids = {self._id_str(cls.id) for cls in self.classes if self._matches_class(class_name, cls)}
-                    matched_subjects = [sub for sub in matched_subjects if self._id_str(sub.class_id) in matching_class_ids]
+                    matching_class_ids = {
+                        self._id_str(cls.id)
+                        for cls in self.classes
+                        if self._matches_class(class_name, cls)
+                    }
+                    matched_subjects = [
+                        sub
+                        for sub in matched_subjects
+                        if self._id_str(sub.class_id) in matching_class_ids
+                    ]
 
                 for sub in matched_subjects:
                     for day in range(self.num_days):
@@ -1164,21 +1402,35 @@ class TimetableScheduler:
                             if key in self.variables:
                                 self.model.Add(self.variables[key] == 0)
                 if matched_subjects:
-                    logger.debug(f"Applied preferred_time_slot for '{target}' ({target_type}) -> {pref}")
+                    logger.debug(
+                        f"Applied preferred_time_slot for '{target}' ({target_type}) -> {pref}"
+                    )
                 else:
-                    self._constraint_error(f"preferred_time_slot: target '{target}' ({target_type}) not found in loaded data")
+                    self._constraint_error(
+                        f"preferred_time_slot: target '{target}' ({target_type}) not found in loaded data"
+                    )
 
             # ── avoid_time_slot ────────────────────────────────────────────────
             elif c_type == "avoid_time_slot":
                 target = str(constraint.get("target", ""))
                 target_type = str(constraint.get("target_type", "class")).lower()
-                blocked_periods = [int(p) - 1 for p in constraint.get("periods", [])]  # convert 1-indexed → 0-indexed
+                blocked_periods = [
+                    int(p) - 1 for p in constraint.get("periods", [])
+                ]  # convert 1-indexed → 0-indexed
 
                 matched_subjects = self._subjects_for_target(target, target_type)
                 class_name = constraint.get("class_name")
                 if class_name:
-                    matching_class_ids = {self._id_str(cls.id) for cls in self.classes if self._matches_class(class_name, cls)}
-                    matched_subjects = [sub for sub in matched_subjects if self._id_str(sub.class_id) in matching_class_ids]
+                    matching_class_ids = {
+                        self._id_str(cls.id)
+                        for cls in self.classes
+                        if self._matches_class(class_name, cls)
+                    }
+                    matched_subjects = [
+                        sub
+                        for sub in matched_subjects
+                        if self._id_str(sub.class_id) in matching_class_ids
+                    ]
 
                 for sub in matched_subjects:
                     for day in range(self.num_days):
@@ -1188,9 +1440,13 @@ class TimetableScheduler:
                                 if key in self.variables:
                                     self.model.Add(self.variables[key] == 0)
                 if matched_subjects:
-                    logger.debug(f"Applied avoid_time_slot for '{target}' ({target_type}, periods={blocked_periods})")
+                    logger.debug(
+                        f"Applied avoid_time_slot for '{target}' ({target_type}, periods={blocked_periods})"
+                    )
                 else:
-                    self._constraint_error(f"avoid_time_slot: target '{target}' ({target_type}) not found in loaded data")
+                    self._constraint_error(
+                        f"avoid_time_slot: target '{target}' ({target_type}) not found in loaded data"
+                    )
 
             # ── consecutive_periods ────────────────────────────────────────────
             elif c_type == "consecutive_periods":
@@ -1202,7 +1458,7 @@ class TimetableScheduler:
                         matches = True
                     elif self._matches_subject(sub_type, sub):
                         matches = True
-                    
+
                     if matches:
                         matched_count += 1
                         for day in range(self.num_days):
@@ -1210,32 +1466,46 @@ class TimetableScheduler:
                             for p in range(self.periods_per_day):
                                 key = f"s{sub.id}_d{day}_p{p}"
                                 if key in self.variables:
-                                    pv = self.model.NewBoolVar(f"custom_pres_s{sub.id}_d{day}_p{p}")
+                                    pv = self.model.NewBoolVar(
+                                        f"custom_pres_s{sub.id}_d{day}_p{p}"
+                                    )
                                     self.model.Add(self.variables[key] == pv)
                                     p_present.append(pv)
                                 else:
                                     p_present.append(None)
-                            
+
                             for i in range(self.periods_per_day):
                                 for k in range(i + 2, self.periods_per_day):
                                     for j in range(i + 1, k):
                                         vi = p_present[i]
                                         vk = p_present[k]
                                         vj = p_present[j]
-                                        if vi is not None and vk is not None and vj is not None:
+                                        if (
+                                            vi is not None
+                                            and vk is not None
+                                            and vj is not None
+                                        ):
                                             self.model.Add(vi + vk - vj <= 1)
                 if matched_count:
                     logger.debug(f"Applied consecutive_periods for type '{sub_type}'")
                 else:
-                    self._constraint_error(f"consecutive_periods: subject type '{sub_type}' not found in loaded data")
+                    self._constraint_error(
+                        f"consecutive_periods: subject type '{sub_type}' not found in loaded data"
+                    )
 
             # ── class_gap ──────────────────────────────────────────────────────
             elif c_type == "class_gap":
                 cls_name = str(constraint.get("class_name", ""))
                 min_gap = int(constraint.get("min_gap", 1))
-                matched_classes = [cls for cls in self.classes if self._matches_class(cls_name, cls)]
+                matched_classes = [
+                    cls for cls in self.classes if self._matches_class(cls_name, cls)
+                ]
                 for cls in matched_classes:
-                    cls_subjects = [s for s in self.subjects if self._id_str(s.class_id) == self._id_str(cls.id)]
+                    cls_subjects = [
+                        s
+                        for s in self.subjects
+                        if self._id_str(s.class_id) == self._id_str(cls.id)
+                    ]
                     for day in range(self.num_days):
                         class_slot_vars = []
                         for p in range(self.periods_per_day):
@@ -1249,12 +1519,24 @@ class TimetableScheduler:
                         for p in range(self.periods_per_day):
                             for gap in range(1, min_gap + 1):
                                 p_next = p + gap
-                                if p_next < self.periods_per_day and class_slot_vars[p] and class_slot_vars[p_next]:
-                                    self.model.Add(sum(class_slot_vars[p]) + sum(class_slot_vars[p_next]) <= 1)
+                                if (
+                                    p_next < self.periods_per_day
+                                    and class_slot_vars[p]
+                                    and class_slot_vars[p_next]
+                                ):
+                                    self.model.Add(
+                                        sum(class_slot_vars[p])
+                                        + sum(class_slot_vars[p_next])
+                                        <= 1
+                                    )
                 if matched_classes:
-                    logger.debug(f"Applied class_gap for class '{cls_name}' (min_gap={min_gap})")
+                    logger.debug(
+                        f"Applied class_gap for class '{cls_name}' (min_gap={min_gap})"
+                    )
                 else:
-                    self._constraint_error(f"class_gap: class '{cls_name}' not found in loaded data")
+                    self._constraint_error(
+                        f"class_gap: class '{cls_name}' not found in loaded data"
+                    )
 
             # ── specific_time_slot ─────────────────────────────────────────────
             elif c_type == "specific_time_slot":
@@ -1265,19 +1547,33 @@ class TimetableScheduler:
                     try:
                         p_idx = int(period_num) - 1
                     except (TypeError, ValueError):
-                        self._constraint_error(f"specific_time_slot: invalid period '{period_num}' for target '{target}'")
+                        self._constraint_error(
+                            f"specific_time_slot: invalid period '{period_num}' for target '{target}'"
+                        )
                         continue
                     day_name = constraint.get("day")
                     matched_subjects = self._subjects_for_target(target, target_type)
                     class_name = constraint.get("class_name")
                     if class_name:
-                        matching_class_ids = {self._id_str(cls.id) for cls in self.classes if self._matches_class(class_name, cls)}
-                        matched_subjects = [sub for sub in matched_subjects if self._id_str(sub.class_id) in matching_class_ids]
+                        matching_class_ids = {
+                            self._id_str(cls.id)
+                            for cls in self.classes
+                            if self._matches_class(class_name, cls)
+                        }
+                        matched_subjects = [
+                            sub
+                            for sub in matched_subjects
+                            if self._id_str(sub.class_id) in matching_class_ids
+                        ]
 
                     for sub in matched_subjects:
                         sub_vars = []
                         for day_idx in range(self.num_days):
-                            if day_name and self.working_days[day_idx].lower() != day_name.lower():
+                            if (
+                                day_name
+                                and self.working_days[day_idx].lower()
+                                != day_name.lower()
+                            ):
                                 continue
                             if 0 <= p_idx < self.periods_per_day:
                                 key = f"s{sub.id}_d{day_idx}_p{p_idx}"
@@ -1288,32 +1584,51 @@ class TimetableScheduler:
                         elif not sub_vars:
                             self._constraint_error(
                                 f"specific_time_slot preference unavailable: '{target}' has no feasible variable "
-                                f"for period {period_num}" + (f" on {day_name}" if day_name else "")
+                                f"for period {period_num}"
+                                + (f" on {day_name}" if day_name else "")
                             )
                     if matched_subjects:
-                        mode = "hard" if self._is_hard_specific_constraint(constraint) else "preferred"
-                        logger.debug(f"Applied {mode} specific_time_slot for '{target}' ({target_type}, period={period_num}, day={day_name})")
+                        mode = (
+                            "hard"
+                            if self._is_hard_specific_constraint(constraint)
+                            else "preferred"
+                        )
+                        logger.debug(
+                            f"Applied {mode} specific_time_slot for '{target}' ({target_type}, period={period_num}, day={day_name})"
+                        )
                     else:
-                        self._constraint_error(f"specific_time_slot: target '{target}' ({target_type}) not found in loaded data")
+                        self._constraint_error(
+                            f"specific_time_slot: target '{target}' ({target_type}) not found in loaded data"
+                        )
 
             elif c_type == "specific_time_slot_any":
-                targets = [str(target) for target in constraint.get("targets", []) if target]
+                targets = [
+                    str(target) for target in constraint.get("targets", []) if target
+                ]
                 target_type = str(constraint.get("target_type", "subject")).lower()
                 period_num = constraint.get("period")
                 if period_num is not None:
                     try:
                         p_idx = int(period_num) - 1
                     except (TypeError, ValueError):
-                        self._constraint_error(f"specific_time_slot_any: invalid period '{period_num}' for targets '{targets}'")
+                        self._constraint_error(
+                            f"specific_time_slot_any: invalid period '{period_num}' for targets '{targets}'"
+                        )
                         continue
 
                     day_name = constraint.get("day")
                     class_name = constraint.get("class_name")
-                    matched_subjects = self._subjects_for_constraint_targets(targets, target_type, class_name)
+                    matched_subjects = self._subjects_for_constraint_targets(
+                        targets, target_type, class_name
+                    )
                     slot_vars = []
                     for sub in matched_subjects:
                         for day_idx in range(self.num_days):
-                            if day_name and self.working_days[day_idx].lower() != day_name.lower():
+                            if (
+                                day_name
+                                and self.working_days[day_idx].lower()
+                                != day_name.lower()
+                            ):
                                 continue
                             if 0 <= p_idx < self.periods_per_day:
                                 key = f"s{sub.id}_d{day_idx}_p{p_idx}"
@@ -1325,19 +1640,26 @@ class TimetableScheduler:
                     elif not slot_vars:
                         self._constraint_error(
                             f"specific_time_slot_any unavailable: none of {targets} has a feasible variable "
-                            f"for period {period_num}" + (f" on {day_name}" if day_name else "")
+                            f"for period {period_num}"
+                            + (f" on {day_name}" if day_name else "")
                         )
 
                     if matched_subjects:
-                        mode = "hard" if self._is_hard_specific_constraint(constraint) else "preferred"
-                        logger.debug(f"Applied {mode} specific_time_slot_any for {targets} ({target_type}, period={period_num}, day={day_name})")
+                        mode = (
+                            "hard"
+                            if self._is_hard_specific_constraint(constraint)
+                            else "preferred"
+                        )
+                        logger.debug(
+                            f"Applied {mode} specific_time_slot_any for {targets} ({target_type}, period={period_num}, day={day_name})"
+                        )
                     else:
-                        self._constraint_error(f"specific_time_slot_any: targets {targets} ({target_type}) not found in loaded data")
+                        self._constraint_error(
+                            f"specific_time_slot_any: targets {targets} ({target_type}) not found in loaded data"
+                        )
 
             else:
                 self._constraint_error(f"Unsupported AI constraint type: '{c_type}'")
-
-
 
     def _add_distribution_objective(self):
         """
@@ -1371,14 +1693,21 @@ class TimetableScheduler:
                     if key in self.variables:
                         if sub.requires_lab:
                             # Prefer afternoon for labs: penalize early periods heavily
-                            penalty_terms.append(self.variables[key] * (self.periods_per_day - period) * 10)
+                            penalty_terms.append(
+                                self.variables[key]
+                                * (self.periods_per_day - period)
+                                * 10
+                            )
                         else:
                             # Filling extra/free slots is credit-weighted, while
                             # morning preference is period-based and equal for
                             # every theory subject.
                             credit_fill_reward = -100 * credit
                             equal_morning_penalty = period * 3
-                            penalty_terms.append(self.variables[key] * (credit_fill_reward + equal_morning_penalty))
+                            penalty_terms.append(
+                                self.variables[key]
+                                * (credit_fill_reward + equal_morning_penalty)
+                            )
 
         # Treat user/PDF fixed slots as the first scheduling priority after
         # feasibility and required-hour coverage. Remaining slots are then
@@ -1404,15 +1733,19 @@ class TimetableScheduler:
             if sub.requires_lab:
                 penalty_terms.append(room_var * (0 if room_type == "lab" else 250000))
             elif default_room_id:
-                penalty_terms.append(room_var * (-50000 if room_id == default_room_id else 500000))
+                penalty_terms.append(
+                    room_var * (-50000 if room_id == default_room_id else 500000)
+                )
             else:
                 penalty_terms.append(room_var * 100)
 
         morning_fairness_terms = []
         for class_obj in self.classes:
             class_theory_subjects = [
-                sub for sub in self.subjects
-                if self._id_str(sub.class_id) == self._id_str(class_obj.id) and not sub.requires_lab
+                sub
+                for sub in self.subjects
+                if self._id_str(sub.class_id) == self._id_str(class_obj.id)
+                and not sub.requires_lab
             ]
             morning_loads = []
             for sub in class_theory_subjects:
@@ -1424,45 +1757,63 @@ class TimetableScheduler:
                             morning_vars.append(self.variables[key])
                 if morning_vars:
                     max_possible = len(morning_vars)
-                    morning_load = self.model.NewIntVar(0, max_possible, f"morning_load_s{sub.id}")
+                    morning_load = self.model.NewIntVar(
+                        0, max_possible, f"morning_load_s{sub.id}"
+                    )
                     self.model.Add(morning_load == sum(morning_vars))
                     morning_loads.append(morning_load)
 
             if len(morning_loads) >= 2:
-                max_morning = self.model.NewIntVar(0, self.num_days * half_day, f"max_morning_c{class_obj.id}")
-                min_morning = self.model.NewIntVar(0, self.num_days * half_day, f"min_morning_c{class_obj.id}")
+                max_morning = self.model.NewIntVar(
+                    0, self.num_days * half_day, f"max_morning_c{class_obj.id}"
+                )
+                min_morning = self.model.NewIntVar(
+                    0, self.num_days * half_day, f"min_morning_c{class_obj.id}"
+                )
                 self.model.AddMaxEquality(max_morning, morning_loads)
                 self.model.AddMinEquality(min_morning, morning_loads)
-                morning_spread = self.model.NewIntVar(0, self.num_days * half_day, f"morning_spread_c{class_obj.id}")
+                morning_spread = self.model.NewIntVar(
+                    0, self.num_days * half_day, f"morning_spread_c{class_obj.id}"
+                )
                 self.model.Add(morning_spread == max_morning - min_morning)
                 morning_fairness_terms.append(morning_spread)
 
         morning_penalty = sum(penalty_terms) if penalty_terms else 0
-        if hasattr(self, 'shortage_vars') and self.shortage_vars:
+        if hasattr(self, "shortage_vars") and self.shortage_vars:
             morning_penalty += sum(v * 100000 for v in self.shortage_vars)
-        if hasattr(self, 'empty_slot_vars') and self.empty_slot_vars:
+        if hasattr(self, "empty_slot_vars") and self.empty_slot_vars:
             morning_penalty += sum(v * 50000 for v in self.empty_slot_vars)
         if morning_fairness_terms:
             morning_penalty += sum(v * 300 for v in morning_fairness_terms)
 
         if len(theory_daily_load) >= 2:
-            max_load = self.model.NewIntVar(0, self.periods_per_day * len(self.subjects), "max_load")
-            min_load = self.model.NewIntVar(0, self.periods_per_day * len(self.subjects), "min_load")
+            max_load = self.model.NewIntVar(
+                0, self.periods_per_day * len(self.subjects), "max_load"
+            )
+            min_load = self.model.NewIntVar(
+                0, self.periods_per_day * len(self.subjects), "min_load"
+            )
             self.model.AddMaxEquality(max_load, theory_daily_load)
             self.model.AddMinEquality(min_load, theory_daily_load)
-            spread = self.model.NewIntVar(0, self.periods_per_day * len(self.subjects), "spread")
+            spread = self.model.NewIntVar(
+                0, self.periods_per_day * len(self.subjects), "spread"
+            )
             self.model.Add(spread == max_load - min_load)
-            
+
             # Combine objectives: first avoid missing hours, then keep distribution
             # and morning fairness healthy, then use credit-weighted extras.
             self.model.Minimize(spread * 1000 + morning_penalty)
-            logger.debug("Added credit-fill, even distribution, and fair-morning objectives")
+            logger.debug(
+                "Added credit-fill, even distribution, and fair-morning objectives"
+            )
         else:
             self.model.Minimize(morning_penalty)
             logger.debug("Added credit-fill and fair-morning objective")
 
     def solve(self) -> Dict[str, Any]:
-        logger.info(f"Step 4/5: Solving model (Time Limit: {self.time_limit_seconds}s)...")
+        logger.info(
+            f"Step 4/5: Solving model (Time Limit: {self.time_limit_seconds}s)..."
+        )
         self._add_distribution_objective()
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = self.time_limit_seconds
@@ -1472,17 +1823,25 @@ class TimetableScheduler:
         start_time = time.time()
         status = solver.Solve(self.model)
         duration = time.time() - start_time
-        logger.info(f"Step 5/5: Solver finished in {duration:.2f}s with status: {solver.StatusName(status)}")
-        logger.info(f"Solver Statistics: Conflicts: {solver.NumConflicts()}, Branches: {solver.NumBranches()}, WallTime: {solver.WallTime()}s")
+        logger.info(
+            f"Step 5/5: Solver finished in {duration:.2f}s with status: {solver.StatusName(status)}"
+        )
+        logger.info(
+            f"Solver Statistics: Conflicts: {solver.NumConflicts()}, Branches: {solver.NumBranches()}, WallTime: {solver.WallTime()}s"
+        )
 
-        status_map = {cp_model.OPTIMAL: "OPTIMAL", cp_model.FEASIBLE: "FEASIBLE",
-                      cp_model.INFEASIBLE: "INFEASIBLE", cp_model.MODEL_INVALID: "MODEL_INVALID",
-                      cp_model.UNKNOWN: "UNKNOWN"}
+        status_map = {
+            cp_model.OPTIMAL: "OPTIMAL",
+            cp_model.FEASIBLE: "FEASIBLE",
+            cp_model.INFEASIBLE: "INFEASIBLE",
+            cp_model.MODEL_INVALID: "MODEL_INVALID",
+            cp_model.UNKNOWN: "UNKNOWN",
+        }
 
         result = {
             "status": status_map.get(status, "UNKNOWN"),
             "schedule": None,
-            "solve_time": solver.WallTime()
+            "solve_time": solver.WallTime(),
         }
         if status in [cp_model.OPTIMAL, cp_model.FEASIBLE]:
             result["schedule"] = self.extract_schedule(solver)
@@ -1493,73 +1852,117 @@ class TimetableScheduler:
         for class_obj in self.classes:
             timeline_slots = self._get_class_timeline_slots(class_obj)
             batch = class_obj._doc.get("_batch_obj")
-            dept_name = next((d.name for d in self.departments if d.id == class_obj.department_id), "")
+            dept_name = next(
+                (d.name for d in self.departments if d.id == class_obj.department_id),
+                "",
+            )
 
             class_schedule = {
                 "class_id": class_obj.id,
                 "class_name": f"{class_obj.name} {class_obj.section or ''}",
                 "department": dept_name,
                 "batch_name": batch.name if batch else "Default",
-                "default_room": self._room_label(self.room_by_id.get(self._id_str(class_obj.room_id))),
-                "timetable": {}
+                "default_room": self._room_label(
+                    self.room_by_id.get(self._id_str(class_obj.room_id))
+                ),
+                "timetable": {},
             }
 
-            class_subjects = [s for s in self.subjects if self._id_str(s.class_id) == self._id_str(class_obj.id)]
+            class_subjects = [
+                s
+                for s in self.subjects
+                if self._id_str(s.class_id) == self._id_str(class_obj.id)
+            ]
 
             for day_idx, day_name in enumerate(self.working_days):
                 day_schedule = []
                 for timeline_slot in timeline_slots:
                     if timeline_slot.get("slot_type") == "break":
-                        day_schedule.append({
-                            "slot_type": "break",
-                            "break_type": timeline_slot.get("break_type", "break"),
-                            "label": timeline_slot.get("label", "Break"),
-                            "period": None,
-                            "time": self._format_time_range(timeline_slot["start"], timeline_slot["end"]),
-                            "subject": None,
-                        })
+                        day_schedule.append(
+                            {
+                                "slot_type": "break",
+                                "break_type": timeline_slot.get("break_type", "break"),
+                                "label": timeline_slot.get("label", "Break"),
+                                "period": None,
+                                "time": self._format_time_range(
+                                    timeline_slot["start"], timeline_slot["end"]
+                                ),
+                                "subject": None,
+                            }
+                        )
                         continue
 
                     p_idx = timeline_slot["period_index"]
                     slot_info = {
                         "slot_type": "period",
                         "period": p_idx + 1,
-                        "time": self._format_time_range(timeline_slot["start"], timeline_slot["end"]),
-                        "subject": None
+                        "time": self._format_time_range(
+                            timeline_slot["start"], timeline_slot["end"]
+                        ),
+                        "subject": None,
                     }
 
                     for sub in class_subjects:
                         key = f"s{sub.id}_d{day_idx}_p{p_idx}"
-                        if key in self.variables and solver.Value(self.variables[key]) == 1:
+                        if (
+                            key in self.variables
+                            and solver.Value(self.variables[key]) == 1
+                        ):
                             faculty_name = "TBA"
                             if sub.faculty_id:
-                                fac = next((f for f in self.faculty if self._id_str(f.id) == self._id_str(sub.faculty_id)), None)
+                                fac = next(
+                                    (
+                                        f
+                                        for f in self.faculty
+                                        if self._id_str(f.id)
+                                        == self._id_str(sub.faculty_id)
+                                    ),
+                                    None,
+                                )
                                 if fac:
                                     faculty_name = fac.name
 
                             assigned_room = None
                             for room in self._candidate_rooms_for_subject(sub):
                                 room_key = f"s{sub.id}_d{day_idx}_p{p_idx}_r{room.id}"
-                                if room_key in self.room_variables and solver.Value(self.room_variables[room_key]) == 1:
+                                if (
+                                    room_key in self.room_variables
+                                    and solver.Value(self.room_variables[room_key]) == 1
+                                ):
                                     assigned_room = room
                                     break
 
-                            is_custom = (sub.id, day_idx, p_idx) in self.specific_constrained_slots
-                            class_default_room_id = self._id_str(class_obj.room_id)
-                            assigned_room_id = self._id_str(assigned_room.id) if assigned_room else None
-                            room_change_reason = self._room_change_reason(sub, class_obj, assigned_room)
-                            slot_info.update({
-                                "subject": sub.name,
-                                "subject_code": sub.code,
-                                "faculty": faculty_name,
-                                "room": self._room_label(assigned_room),
-                                "room_id": assigned_room_id,
-                                "room_moved": bool(room_change_reason),
-                                "room_change_reason": room_change_reason,
-                                "room_changed": bool(room_change_reason and room_change_reason != "lab_session"),
-                                "is_lab": sub.requires_lab,
-                                "is_custom": is_custom
-                            })
+                            is_custom = (
+                                sub.id,
+                                day_idx,
+                                p_idx,
+                            ) in self.specific_constrained_slots
+                            self._id_str(class_obj.room_id)
+                            assigned_room_id = (
+                                self._id_str(assigned_room.id)
+                                if assigned_room
+                                else None
+                            )
+                            room_change_reason = self._room_change_reason(
+                                sub, class_obj, assigned_room
+                            )
+                            slot_info.update(
+                                {
+                                    "subject": sub.name,
+                                    "subject_code": sub.code,
+                                    "faculty": faculty_name,
+                                    "room": self._room_label(assigned_room),
+                                    "room_id": assigned_room_id,
+                                    "room_moved": bool(room_change_reason),
+                                    "room_change_reason": room_change_reason,
+                                    "room_changed": bool(
+                                        room_change_reason
+                                        and room_change_reason != "lab_session"
+                                    ),
+                                    "is_lab": sub.requires_lab,
+                                    "is_custom": is_custom,
+                                }
+                            )
                             break
                     day_schedule.append(slot_info)
                 class_schedule["timetable"][day_name] = day_schedule
@@ -1567,7 +1970,9 @@ class TimetableScheduler:
             schedule[f"class_{class_obj.id}"] = class_schedule
         return schedule
 
-    def _validate_custom_constraints_against_schedule(self, schedule: Dict[str, Any]) -> List[str]:
+    def _validate_custom_constraints_against_schedule(
+        self, schedule: Dict[str, Any]
+    ) -> List[str]:
         errors = []
         for constraint in self.custom_constraints:
             c_type = constraint.get("type")
@@ -1588,7 +1993,9 @@ class TimetableScheduler:
                             continue
                         for slot in slots:
                             slot_faculty = slot.get("faculty")
-                            if slot.get("subject") and self._matches_text(faculty_name, slot_faculty):
+                            if slot.get("subject") and self._matches_text(
+                                faculty_name, slot_faculty
+                            ):
                                 errors.append(
                                     f"faculty_availability violated: {slot_faculty} is scheduled for "
                                     f"{slot.get('subject')} in {class_schedule.get('class_name')} on {day_name}, "
@@ -1611,7 +2018,9 @@ class TimetableScheduler:
                             continue
                         for slot in slots:
                             slot_faculty = slot.get("faculty")
-                            if slot.get("subject") and self._matches_text(faculty_name, slot_faculty):
+                            if slot.get("subject") and self._matches_text(
+                                faculty_name, slot_faculty
+                            ):
                                 errors.append(
                                     f"faculty_unavailability violated: {slot_faculty} is scheduled for "
                                     f"{slot.get('subject')} in {class_schedule.get('class_name')} on {day_name}."
@@ -1631,7 +2040,9 @@ class TimetableScheduler:
                 satisfied = False
                 for class_schedule in schedule.values():
                     schedule_class_name = str(class_schedule.get("class_name", ""))
-                    if class_name and not self._matches_text(class_name, schedule_class_name):
+                    if class_name and not self._matches_text(
+                        class_name, schedule_class_name
+                    ):
                         continue
                     matched_any_class = True
 
@@ -1653,15 +2064,27 @@ class TimetableScheduler:
                         break
 
                 if matched_any_class and not satisfied:
-                    label = "hard constraint" if self._is_hard_specific_constraint(constraint) else "preference"
+                    label = (
+                        "hard constraint"
+                        if self._is_hard_specific_constraint(constraint)
+                        else "preference"
+                    )
                     errors.append(
                         f"specific_time_slot {label} not met: {target} "
-                        f"period {period}" + (f" on {constraint.get('day')}" if constraint.get("day") else "") +
-                        (f" for {class_name}" if class_name else "") + "."
+                        f"period {period}"
+                        + (
+                            f" on {constraint.get('day')}"
+                            if constraint.get("day")
+                            else ""
+                        )
+                        + (f" for {class_name}" if class_name else "")
+                        + "."
                     )
 
             elif c_type == "specific_time_slot_any":
-                targets = [str(target) for target in constraint.get("targets", []) if target]
+                targets = [
+                    str(target) for target in constraint.get("targets", []) if target
+                ]
                 class_name = str(constraint.get("class_name", ""))
                 day_filter = str(constraint.get("day", "")).lower()
                 try:
@@ -1673,7 +2096,9 @@ class TimetableScheduler:
                 satisfied = False
                 for class_schedule in schedule.values():
                     schedule_class_name = str(class_schedule.get("class_name", ""))
-                    if class_name and not self._matches_text(class_name, schedule_class_name):
+                    if class_name and not self._matches_text(
+                        class_name, schedule_class_name
+                    ):
                         continue
                     matched_any_class = True
 
@@ -1683,7 +2108,10 @@ class TimetableScheduler:
                         for slot in slots:
                             if slot.get("period") != period:
                                 continue
-                            satisfied = any(self._matches_schedule_subject(target, slot) for target in targets)
+                            satisfied = any(
+                                self._matches_schedule_subject(target, slot)
+                                for target in targets
+                            )
                             if satisfied:
                                 break
                         if satisfied:
@@ -1692,16 +2120,28 @@ class TimetableScheduler:
                         break
 
                 if matched_any_class and not satisfied:
-                    label = "hard constraint" if self._is_hard_specific_constraint(constraint) else "preference"
+                    label = (
+                        "hard constraint"
+                        if self._is_hard_specific_constraint(constraint)
+                        else "preference"
+                    )
                     errors.append(
                         f"specific_time_slot_any {label} not met: one of {', '.join(targets)} "
-                        f"period {period}" + (f" on {constraint.get('day')}" if constraint.get("day") else "") +
-                        (f" for {class_name}" if class_name else "") + "."
+                        f"period {period}"
+                        + (
+                            f" on {constraint.get('day')}"
+                            if constraint.get("day")
+                            else ""
+                        )
+                        + (f" for {class_name}" if class_name else "")
+                        + "."
                     )
 
         return errors
 
-    def _auto_assign_faculty_to_unassigned_subjects(self) -> Tuple[List[Tuple[_Obj, str]], List[_Obj]]:
+    def _auto_assign_faculty_to_unassigned_subjects(
+        self,
+    ) -> Tuple[List[Tuple[_Obj, str]], List[_Obj]]:
         """
         Greedy in-memory assignment of faculty to subjects that lack a `faculty_id`.
         Respects faculty `max_hours_per_week` and basic availability estimation.
@@ -1714,7 +2154,7 @@ class TimetableScheduler:
         fac_by_dept = {}
         assigned_hours = {}
         for f in self.faculty:
-            dep = getattr(f, 'department_id', None)
+            dep = getattr(f, "department_id", None)
             fac_by_dept.setdefault(dep, []).append(f)
             assigned_hours[self._id_str(f.id)] = 0
 
@@ -1722,7 +2162,9 @@ class TimetableScheduler:
         for s in self.subjects:
             if s.faculty_id:
                 fid = self._id_str(s.faculty_id)
-                assigned_hours[fid] = assigned_hours.get(fid, 0) + self._effective_hours(s)
+                assigned_hours[fid] = assigned_hours.get(
+                    fid, 0
+                ) + self._effective_hours(s)
 
         # Subjects that need faculty
         unassigned = [s for s in self.subjects if not s.faculty_id]
@@ -1734,7 +2176,7 @@ class TimetableScheduler:
             class_obj = self.class_map.get(self._id_str(subj.class_id))
             preferred_dept = None
             if class_obj:
-                preferred_dept = getattr(class_obj, 'department_id', None)
+                preferred_dept = getattr(class_obj, "department_id", None)
 
             candidates = []
             if preferred_dept in fac_by_dept:
@@ -1748,7 +2190,7 @@ class TimetableScheduler:
             need = self._effective_hours(subj)
             for f in candidates:
                 fid = self._id_str(f.id)
-                max_h = getattr(f, 'max_hours_per_week', None) or 0
+                max_h = getattr(f, "max_hours_per_week", None) or 0
                 if assigned_hours.get(fid, 0) + need <= max_h:
                     # Basic availability check: count potential slots across class timelines
                     # Estimate available slots as total class slots minus faculty unavailability overlaps
@@ -1759,7 +2201,9 @@ class TimetableScheduler:
                         intervals = self._get_class_period_intervals(cls)
                         for day_idx, day_name in enumerate(self.working_days):
                             for p_idx, (start, end) in enumerate(intervals):
-                                if not self._is_faculty_unavailable(f, day_idx, day_name, p_idx, start, end):
+                                if not self._is_faculty_unavailable(
+                                    f, day_idx, day_name, p_idx, start, end
+                                ):
                                     total_potential += 1
                     else:
                         # conservatively allow
@@ -1776,17 +2220,31 @@ class TimetableScheduler:
             viable.sort(key=lambda x: -x[1])
             chosen = viable[0][0]
             # assign in-memory
-            subj._doc['faculty_id'] = ObjectId(chosen.id) if ObjectId.is_valid(chosen.id) else chosen.id
-            assigned_hours[self._id_str(chosen.id)] = assigned_hours.get(self._id_str(chosen.id), 0) + need
+            subj._doc["faculty_id"] = (
+                ObjectId(chosen.id) if ObjectId.is_valid(chosen.id) else chosen.id
+            )
+            assigned_hours[self._id_str(chosen.id)] = (
+                assigned_hours.get(self._id_str(chosen.id), 0) + need
+            )
             auto_assigned.append((subj, chosen.name, self._id_str(chosen.id)))
 
         return auto_assigned, failed
 
-    def generate_schedule(self, department_ids: Optional[List[str]] = None, batch_ids: Optional[List[str]] = None, class_ids: Optional[List[str]] = None, faculty_ids: Optional[List[str]] = None) -> Dict[str, Any]:
+    def generate_schedule(
+        self,
+        department_ids: Optional[List[str]] = None,
+        batch_ids: Optional[List[str]] = None,
+        class_ids: Optional[List[str]] = None,
+        faculty_ids: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
         data_summary = self.load_data(department_ids, batch_ids, class_ids, faculty_ids)
         self._sync_periods_per_day_to_batch_timings()
         if not self.classes or not self.subjects:
-            msg = "No classes found." if not self.classes else "Found Classes, but NO Subjects are assigned to them.\nHint: Go to 'Mapping' and assign your Global Subjects to these Classes."
+            msg = (
+                "No classes found."
+                if not self.classes
+                else "Found Classes, but NO Subjects are assigned to them.\nHint: Go to 'Mapping' and assign your Global Subjects to these Classes."
+            )
             return {"status": "ERROR", "message": msg, "data_summary": data_summary}
         # VALIDATION: Ensure every subject has a Class mapped; try to auto-assign Faculty where missing.
         missing_mappings = []
@@ -1805,39 +2263,58 @@ class TimetableScheduler:
             if auto_assigned:
                 logger.info(f"Auto-assigned faculty for {len(auto_assigned)} subjects")
                 # Update data_summary with info
-                data_summary["auto_assigned_subjects"] = [f"{s.name} -> {f_name}" for s, f_name, _ in auto_assigned]
+                data_summary["auto_assigned_subjects"] = [
+                    f"{s.name} -> {f_name}" for s, f_name, _ in auto_assigned
+                ]
                 # Persist assignments to DB so mappings appear in UI
                 for subj, _, fac_id in auto_assigned:
                     try:
-                        sid = ObjectId(subj.id) if ObjectId.is_valid(subj.id) else subj.id
+                        sid = (
+                            ObjectId(subj.id) if ObjectId.is_valid(subj.id) else subj.id
+                        )
                         fid = ObjectId(fac_id) if ObjectId.is_valid(fac_id) else fac_id
-                        self.db["subjects"].update_one({"_id": sid}, {"$set": {"faculty_id": fid}})
+                        self.db["subjects"].update_one(
+                            {"_id": sid}, {"$set": {"faculty_id": fid}}
+                        )
                     except Exception:
-                        logger.exception(f"Failed to persist auto-assignment for subject {subj.id}")
+                        logger.exception(
+                            f"Failed to persist auto-assignment for subject {subj.id}"
+                        )
 
             if failed:
                 # Build clear error list for subjects still lacking mapping
                 missing_list = [f"{s.name} ({s.code}): Missing Faculty" for s in failed]
-                msg = "Could not auto-assign faculty for the following subjects. Please assign faculty manually before generating a timetable:\n" + "\n".join(missing_list)
+                msg = (
+                    "Could not auto-assign faculty for the following subjects. Please assign faculty manually before generating a timetable:\n"
+                    + "\n".join(missing_list)
+                )
                 logger.warning(msg)
                 return {"status": "ERROR", "message": msg, "data_summary": data_summary}
 
         # VALIDATION 2: Smart Overflow Auto-Correction (think like staff)
         for class_obj in self.classes:
-            class_subjects = [s for s in self.subjects if self._id_str(s.class_id) == self._id_str(class_obj.id)]
+            class_subjects = [
+                s
+                for s in self.subjects
+                if self._id_str(s.class_id) == self._id_str(class_obj.id)
+            ]
             if not class_subjects:
                 continue
             # Priority: labs first, then higher credits first
             class_subjects_sorted = sorted(
                 class_subjects,
-                key=lambda s: (-(1 if s.requires_lab else 0), -(int(s.credits or 3)))
+                key=lambda s: (-(1 if s.requires_lab else 0), -(int(s.credits or 3))),
             )
             total_eff = sum(self._effective_hours(s) for s in class_subjects_sorted)
-            total_slots = self.num_days * len(self._get_class_period_intervals(class_obj))
+            total_slots = self.num_days * len(
+                self._get_class_period_intervals(class_obj)
+            )
 
             if total_eff > total_slots:
                 excess = total_eff - total_slots
-                logger.warning(f"Class '{class_obj.name}' overloaded by {excess} slots — auto-correcting...")
+                logger.warning(
+                    f"Class '{class_obj.name}' overloaded by {excess} slots — auto-correcting..."
+                )
                 # Trim from lowest priority subjects first
                 for sub in reversed(class_subjects_sorted):
                     if excess <= 0:
@@ -1862,7 +2339,11 @@ class TimetableScheduler:
 
         # VALIDATION 3: Faculty Workload — warn, don't block
         for fac in self.faculty:
-            fac_subjects = [s for s in self.subjects if self._id_str(s.faculty_id) == self._id_str(fac.id)]
+            fac_subjects = [
+                s
+                for s in self.subjects
+                if self._id_str(s.faculty_id) == self._id_str(fac.id)
+            ]
             total_assigned = sum(self._effective_hours(s) for s in fac_subjects)
             max_h = int(fac.max_hours_per_week or 40)
             if total_assigned > max_h:
@@ -1876,7 +2357,9 @@ class TimetableScheduler:
         # Constraints are now soft-fail — never block scheduling
         result = self.solve()
         if result.get("schedule"):
-            schedule_warnings = self._validate_custom_constraints_against_schedule(result["schedule"])
+            schedule_warnings = self._validate_custom_constraints_against_schedule(
+                result["schedule"]
+            )
             self.constraint_warnings.extend(schedule_warnings)
         result["data_summary"] = data_summary
         result["effective_periods_per_day"] = self.periods_per_day
@@ -1901,7 +2384,9 @@ class TimetableScheduler:
         suggestions = {}
 
         # Helper: list faculty who could potentially cover a subject on a given day
-        def candidates_for_subject_on_day(subject_obj, day_idx, day_name, excluded_faculty_id):
+        def candidates_for_subject_on_day(
+            subject_obj, day_idx, day_name, excluded_faculty_id
+        ):
             candidates = []
             for f in self.faculty:
                 if self._id_str(f.id) == self._id_str(excluded_faculty_id):
@@ -1911,7 +2396,9 @@ class TimetableScheduler:
                 intervals = self._get_class_period_intervals(cls) if cls else []
                 available = False
                 for p_idx, (start, end) in enumerate(intervals):
-                    if not self._is_faculty_unavailable(f, day_idx, day_name, p_idx, start, end):
+                    if not self._is_faculty_unavailable(
+                        f, day_idx, day_name, p_idx, start, end
+                    ):
                         available = True
                         break
                 if not available:
@@ -1920,12 +2407,18 @@ class TimetableScheduler:
                 score = 0
                 # Prefer faculty who already teach the same subject elsewhere
                 for s in self.subjects:
-                    if self._id_str(s.faculty_id) == self._id_str(f.id) and self._matches_subject(subject_obj.name, s):
+                    if self._id_str(s.faculty_id) == self._id_str(
+                        f.id
+                    ) and self._matches_subject(subject_obj.name, s):
                         score += 30
                         break
                 # Prefer same department
-                if getattr(f, 'department_id', None) and getattr(cls, '_doc', None):
-                    if f.department_id and cls._doc.get('department_id') and f.department_id == cls._doc.get('department_id'):
+                if getattr(f, "department_id", None) and getattr(cls, "_doc", None):
+                    if (
+                        f.department_id
+                        and cls._doc.get("department_id")
+                        and f.department_id == cls._doc.get("department_id")
+                    ):
                         score += 10
 
                 candidates.append((score, f.name))
@@ -1935,32 +2428,55 @@ class TimetableScheduler:
             return [name for _, name in candidates]
 
         for constraint in self.custom_constraints:
-            c_type = constraint.get('type')
-            if c_type != 'faculty_availability':
+            c_type = constraint.get("type")
+            if c_type != "faculty_availability":
                 continue
-            f_name = str(constraint.get('faculty_name') or '').strip()
+            f_name = str(constraint.get("faculty_name") or "").strip()
             if not f_name:
                 continue
-            allowed_days = [d.lower() for d in constraint.get('available_days', []) if isinstance(d, str)]
-            absent_days = [d for d in self.working_days if d.lower() not in allowed_days]
+            allowed_days = [
+                d.lower()
+                for d in constraint.get("available_days", [])
+                if isinstance(d, str)
+            ]
+            absent_days = [
+                d for d in self.working_days if d.lower() not in allowed_days
+            ]
             if not absent_days:
                 continue
 
             fac = self._find_faculty_by_name(f_name)
             if not fac:
                 # store empty entry marking not found
-                suggestions[f_name] = {"absent_days": absent_days, "error": "faculty not found", "subjects": {}}
+                suggestions[f_name] = {
+                    "absent_days": absent_days,
+                    "error": "faculty not found",
+                    "subjects": {},
+                }
                 continue
 
-            subjects = [s for s in self.subjects if self._id_str(s.faculty_id) == self._id_str(fac.id)]
+            subjects = [
+                s
+                for s in self.subjects
+                if self._id_str(s.faculty_id) == self._id_str(fac.id)
+            ]
             subj_map = {}
             for subj in subjects:
                 subj_map[subj.name] = {}
                 for day in absent_days:
-                    day_idx = next((i for i, dn in enumerate(self.working_days) if dn.lower() == day.lower()), None)
+                    day_idx = next(
+                        (
+                            i
+                            for i, dn in enumerate(self.working_days)
+                            if dn.lower() == day.lower()
+                        ),
+                        None,
+                    )
                     if day_idx is None:
                         continue
-                    candidates = candidates_for_subject_on_day(subj, day_idx, day, fac.id)
+                    candidates = candidates_for_subject_on_day(
+                        subj, day_idx, day, fac.id
+                    )
                     subj_map[subj.name][day] = candidates
 
             suggestions[fac.name] = {

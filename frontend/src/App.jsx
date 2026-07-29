@@ -14,6 +14,12 @@ const TimetableGenerator = React.lazy(() => import('./components/Timetable/Timet
 const TimetableView = React.lazy(() => import('./components/Timetable/TimetableView'));
 const Settings = React.lazy(() => import('./components/Admin/Settings'));
 const Login = React.lazy(() => import('./components/Login'));
+const UploadPage = React.lazy(() => import('./components/KnowledgeIngestion/UploadPage'));
+const ProcessingPage = React.lazy(() => import('./components/KnowledgeIngestion/ProcessingPage'));
+const DuplicateReview = React.lazy(() => import('./components/KnowledgeIngestion/DuplicateReview'));
+const UploadHistory = React.lazy(() => import('./components/KnowledgeIngestion/UploadHistory'));
+const AuditLogs = React.lazy(() => import('./components/KnowledgeIngestion/AuditLogs'));
+const LearningRules = React.lazy(() => import('./components/KnowledgeIngestion/LearningRules'));
 import Sidebar from './components/Layout/Sidebar';
 import { ToastProvider } from './context/ToastContext';
 
@@ -76,6 +82,15 @@ function App() {
               <Route path="faculty" element={<FacultyManager />} />
               <Route path="mapping" element={<FacultyMapping />} />
               <Route path="generate" element={<TimetableGenerator />} />
+
+              {/* Knowledge Ingestion Module */}
+              <Route path="knowledge/upload" element={<UploadPage />} />
+              <Route path="knowledge/processing/:sessionId" element={<ProcessingPage />} />
+              <Route path="knowledge/review/:sessionId" element={<DuplicateReview />} />
+              <Route path="knowledge/history" element={<UploadHistory />} />
+              <Route path="knowledge/audit-logs" element={<AuditLogs />} />
+              <Route path="knowledge/learning-rules" element={<LearningRules />} />
+              
               <Route path="view" element={<TimetableView />} />
               <Route path="settings" element={<Settings />} />
             </Route>

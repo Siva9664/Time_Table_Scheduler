@@ -92,7 +92,6 @@ def faculty_helper(doc: dict) -> dict:
     }
 
 
-
 def timetable_helper(doc: dict) -> dict:
     return {
         "id": str(doc["_id"]),

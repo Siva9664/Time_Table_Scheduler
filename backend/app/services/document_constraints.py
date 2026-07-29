@@ -12,11 +12,29 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from xml.etree import ElementTree as ET
 
-
-DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+DAY_NAMES = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+]
 TEXT_EXTENSIONS = {
-    ".txt", ".md", ".csv", ".tsv", ".json", ".html", ".htm", ".xml",
-    ".rtf", ".log", ".ics", ".yaml", ".yml",
+    ".txt",
+    ".md",
+    ".csv",
+    ".tsv",
+    ".json",
+    ".html",
+    ".htm",
+    ".xml",
+    ".rtf",
+    ".log",
+    ".ics",
+    ".yaml",
+    ".yml",
 }
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff"}
 ARCHIVE_EXTENSIONS = {".zip"}
@@ -47,7 +65,9 @@ def extract_document_text(
     warnings: List[str] = []
 
     if not content:
-        return ExtractedDocument(safe_filename, content_type or "", "", "empty", ["File is empty."])
+        return ExtractedDocument(
+            safe_filename, content_type or "", "", "empty", ["File is empty."]
+        )
 
     try:
         if ext == ".pdf":
@@ -74,7 +94,9 @@ def extract_document_text(
             warnings.extend(extra)
             extractor = "ocr-image"
         elif ext in ARCHIVE_EXTENSIONS:
-            text, extra = _extract_zip_text(content, max_chars=max_chars, ocr_max_pages=ocr_max_pages)
+            text, extra = _extract_zip_text(
+                content, max_chars=max_chars, ocr_max_pages=ocr_max_pages
+            )
             warnings.extend(extra)
             extractor = "zip"
         elif ext in TEXT_EXTENSIONS or _looks_like_text(content):
@@ -90,7 +112,9 @@ def extract_document_text(
     except Exception as exc:
         text = _decode_bytes(content)
         extractor = "fallback"
-        warnings.append(f"Primary extractor failed for {safe_filename}: {exc}. Used best-effort decoding.")
+        warnings.append(
+            f"Primary extractor failed for {safe_filename}: {exc}. Used best-effort decoding."
+        )
 
     text = _clean_text(text)
     if len(text) > max_chars:
@@ -102,7 +126,9 @@ def extract_document_text(
             "No readable text was found. If this is a scanned PDF or image, install Tesseract OCR and Poppler locally."
         )
 
-    return ExtractedDocument(safe_filename, content_type or "", text, extractor, warnings)
+    return ExtractedDocument(
+        safe_filename, content_type or "", text, extractor, warnings
+    )
 
 
 def build_constraint_text_from_documents(
@@ -128,7 +154,9 @@ def build_constraint_text_from_documents(
 
     fallback_text = "\n\n".join(doc.text for doc in documents if doc.text.strip())
     if fallback_text:
-        warnings.append("No timetable table was detected, so the extracted text will be parsed directly.")
+        warnings.append(
+            "No timetable table was detected, so the extracted text will be parsed directly."
+        )
     return fallback_text, [], warnings
 
 
@@ -171,7 +199,9 @@ def _extract_pdf_text(content: bytes, ocr_max_pages: int) -> Tuple[str, List[str
             warnings.append(f"{module_name} could not read PDF text: {exc}")
 
     cli_text = _pdftotext_cli(content)
-    if cli_text.strip() and (len(text.strip()) < 80 or _looks_more_layout_preserving(cli_text, text)):
+    if cli_text.strip() and (
+        len(text.strip()) < 80 or _looks_more_layout_preserving(cli_text, text)
+    ):
         text = cli_text
         extractor = "pdftotext"
 
@@ -188,8 +218,10 @@ def _extract_pdf_text(content: bytes, ocr_max_pages: int) -> Tuple[str, List[str
 def _extract_docx_text(content: bytes) -> str:
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
         paths = [
-            name for name in archive.namelist()
-            if name.startswith("word/") and name.endswith(".xml")
+            name
+            for name in archive.namelist()
+            if name.startswith("word/")
+            and name.endswith(".xml")
             and any(part in name for part in ("document", "header", "footer"))
         ]
         return "\n".join(_openxml_text(archive.read(path)) for path in paths)
@@ -215,7 +247,8 @@ def _extract_xlsx_text(content: bytes) -> Tuple[str, List[str]]:
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
         shared_strings = _xlsx_shared_strings(archive)
         sheet_paths = sorted(
-            path for path in archive.namelist()
+            path
+            for path in archive.namelist()
             if path.startswith("xl/worksheets/sheet") and path.endswith(".xml")
         )
         lines: List[str] = []
@@ -228,7 +261,8 @@ def _extract_xlsx_text(content: bytes) -> Tuple[str, List[str]]:
 def _extract_pptx_text(content: bytes) -> str:
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
         slide_paths = sorted(
-            name for name in archive.namelist()
+            name
+            for name in archive.namelist()
             if name.startswith("ppt/slides/slide") and name.endswith(".xml")
         )
         return "\n".join(_openxml_text(archive.read(path)) for path in slide_paths)
@@ -263,13 +297,16 @@ def _extract_legacy_office_text(content: bytes, ext: str) -> Tuple[str, List[str
     return _decode_bytes(content), warnings, "legacy-fallback"
 
 
-def _extract_zip_text(content: bytes, *, max_chars: int, ocr_max_pages: int) -> Tuple[str, List[str]]:
+def _extract_zip_text(
+    content: bytes, *, max_chars: int, ocr_max_pages: int
+) -> Tuple[str, List[str]]:
     warnings: List[str] = []
     parts: List[str] = []
     total_chars = 0
     with zipfile.ZipFile(io.BytesIO(content)) as archive:
         members = [
-            name for name in archive.namelist()
+            name
+            for name in archive.namelist()
             if not name.endswith("/") and not Path(name).name.startswith(".")
         ][:30]
         for member in members:
@@ -328,8 +365,8 @@ def _extract_image_ocr(content: bytes) -> Tuple[str, List[str]]:
         
     # Fallback to Tesseract
     try:
-        from PIL import Image
         import pytesseract
+        from PIL import Image
 
         image = Image.open(io.BytesIO(content))
         return pytesseract.image_to_string(image), warnings
@@ -396,8 +433,16 @@ def _pdftotext_cli(content: bytes) -> str:
 def _looks_more_layout_preserving(candidate: str, current: str) -> bool:
     if len(candidate.strip()) < max(80, int(len(current.strip()) * 0.6)):
         return False
-    candidate_score = sum(1 for line in candidate.splitlines() if "\t" in line or re.search(r"\S\s{2,}\S", line))
-    current_score = sum(1 for line in current.splitlines() if "\t" in line or re.search(r"\S\s{2,}\S", line))
+    candidate_score = sum(
+        1
+        for line in candidate.splitlines()
+        if "\t" in line or re.search(r"\S\s{2,}\S", line)
+    )
+    current_score = sum(
+        1
+        for line in current.splitlines()
+        if "\t" in line or re.search(r"\S\s{2,}\S", line)
+    )
     return candidate_score > current_score
 
 
@@ -409,8 +454,13 @@ def _libreoffice_convert_text(content: bytes, ext: str) -> str:
         input_path = Path(tmpdir) / f"input{ext}"
         input_path.write_bytes(content)
         cmd = [
-            binary, "--headless", "--convert-to", "txt:Text",
-            "--outdir", tmpdir, str(input_path),
+            binary,
+            "--headless",
+            "--convert-to",
+            "txt:Text",
+            "--outdir",
+            tmpdir,
+            str(input_path),
         ]
         try:
             subprocess.run(cmd, capture_output=True, timeout=45, check=False)
@@ -465,11 +515,15 @@ def _constraints_from_json_text(text: str) -> List[Dict[str, Any]]:
                 subject = slot.get("subject") or slot.get("subject_code")
                 period = slot.get("period")
                 if subject and period:
-                    constraints.append(_specific_slot(str(subject), str(class_name), str(day), period))
+                    constraints.append(
+                        _specific_slot(str(subject), str(class_name), str(day), period)
+                    )
     return constraints
 
 
-def _constraints_from_table_text(text: str, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _constraints_from_table_text(
+    text: str, context: Dict[str, Any]
+) -> List[Dict[str, Any]]:
     subject_names = list(context.get("subject_names") or [])
     class_names = list(context.get("class_names") or [])
     lines = [line.strip() for line in text.splitlines() if line.strip()]
@@ -496,7 +550,9 @@ def _constraints_from_table_text(text: str, context: Dict[str, Any]) -> List[Dic
             if row_day and len(cells) > 1:
                 row_class = line_class or active_class
                 constraints.extend(
-                    _constraints_from_table_row(cells, row_day, row_class, header_periods, subject_names)
+                    _constraints_from_table_row(
+                        cells, row_day, row_class, header_periods, subject_names
+                    )
                 )
                 continue
 
@@ -507,7 +563,9 @@ def _constraints_from_table_text(text: str, context: Dict[str, Any]) -> List[Dic
             if line_subjects and periods:
                 for subject in line_subjects[:2]:
                     for period in periods:
-                        constraints.append(_specific_slot(subject, row_class, line_day, period))
+                        constraints.append(
+                            _specific_slot(subject, row_class, line_day, period)
+                        )
 
     return constraints
 
@@ -537,7 +595,9 @@ def _constraints_from_table_row(
     return constraints
 
 
-def _specific_slot(subject: str, class_name: Optional[str], day: str, period: Any) -> Dict[str, Any]:
+def _specific_slot(
+    subject: str, class_name: Optional[str], day: str, period: Any
+) -> Dict[str, Any]:
     constraint: Dict[str, Any] = {
         "type": "specific_time_slot",
         "target": str(subject),
@@ -555,7 +615,9 @@ def _constraints_to_text(constraints: List[Dict[str, Any]]) -> str:
     lines = []
     for c in constraints:
         prefix = f"For Class {c['class_name']}, " if c.get("class_name") else ""
-        lines.append(f"{prefix}{c['target']} must be on {c['day']} period {c['period']}.")
+        lines.append(
+            f"{prefix}{c['target']} must be on {c['day']} period {c['period']}."
+        )
     return "\n".join(lines)
 
 
@@ -628,7 +690,19 @@ def _normalize_delimited_text(text: str, delimiter: Optional[str]) -> str:
 
 
 class _TextHTMLParser(HTMLParser):
-    block_tags = {"p", "div", "tr", "table", "section", "article", "li", "h1", "h2", "h3", "h4"}
+    block_tags = {
+        "p",
+        "div",
+        "tr",
+        "table",
+        "section",
+        "article",
+        "li",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+    }
 
     def __init__(self):
         super().__init__()
@@ -653,7 +727,9 @@ class _TextHTMLParser(HTMLParser):
 def _xml_text(text: str) -> str:
     try:
         root = ET.fromstring(text)
-        return " ".join(part.strip() for part in root.itertext() if part and part.strip())
+        return " ".join(
+            part.strip() for part in root.itertext() if part and part.strip()
+        )
     except Exception:
         return re.sub(r"<[^>]+>", " ", text)
 
@@ -778,17 +854,21 @@ def _header_period_map(cells: List[str]) -> Dict[int, int]:
 def _period_numbers(text: str) -> List[int]:
     periods = [
         int(match.group(1))
-        for match in re.finditer(r"\b(?:period|p)\s*#?\s*(\d{1,2})\b", text, flags=re.IGNORECASE)
+        for match in re.finditer(
+            r"\b(?:period|p)\s*#?\s*(\d{1,2})\b", text, flags=re.IGNORECASE
+        )
         if 1 <= int(match.group(1)) <= 20
     ]
     if periods:
         return sorted(set(periods))
     if _find_day(text):
-        return sorted({
-            int(raw)
-            for raw in re.findall(r"\b(\d{1,2})\b", text)
-            if 1 <= int(raw) <= 20
-        })
+        return sorted(
+            {
+                int(raw)
+                for raw in re.findall(r"\b(\d{1,2})\b", text)
+                if 1 <= int(raw) <= 20
+            }
+        )
     return []
 
 
@@ -798,8 +878,13 @@ def _find_day(text: Any) -> Optional[str]:
         if re.search(r"\b" + re.escape(day.lower()) + r"\b", normalized):
             return day
     aliases = {
-        "mon": "Monday", "tue": "Tuesday", "wed": "Wednesday", "thu": "Thursday",
-        "fri": "Friday", "sat": "Saturday", "sun": "Sunday",
+        "mon": "Monday",
+        "tue": "Tuesday",
+        "wed": "Wednesday",
+        "thu": "Thursday",
+        "fri": "Friday",
+        "sat": "Saturday",
+        "sun": "Sunday",
     }
     for alias, day in aliases.items():
         if re.search(r"\b" + alias + r"\b", normalized):
@@ -815,7 +900,9 @@ def _match_names(text: Any, names: List[str]) -> List[str]:
     normalized = _normalize_name(text)
     matches: List[Tuple[int, str]] = []
     occupied: set = set()
-    for name in sorted((n for n in names if n), key=lambda n: len(_normalize_name(n)), reverse=True):
+    for name in sorted(
+        (n for n in names if n), key=lambda n: len(_normalize_name(n)), reverse=True
+    ):
         needle = _normalize_name(name)
         if not needle:
             continue
@@ -849,7 +936,10 @@ def _looks_like_class_header(line: str, class_name: str, day: Optional[str]) -> 
     normalized_class = _normalize_name(class_name)
     if normalized_line == normalized_class:
         return True
-    return any(word in normalized_line for word in ("class", "section", "timetable", "schedule"))
+    return any(
+        word in normalized_line
+        for word in ("class", "section", "timetable", "schedule")
+    )
 
 
 def _is_empty_slot(cell: str) -> bool:
@@ -861,4 +951,6 @@ def _is_empty_slot(cell: str) -> bool:
 
 def _is_break_slot(cell: str) -> bool:
     normalized = _normalize_name(cell)
-    return normalized in BREAK_SLOT_WORDS or any(word in normalized.split() for word in BREAK_SLOT_WORDS)
+    return normalized in BREAK_SLOT_WORDS or any(
+        word in normalized.split() for word in BREAK_SLOT_WORDS
+    )

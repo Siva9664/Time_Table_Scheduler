@@ -1,8 +1,10 @@
-from pydantic_settings import BaseSettings
-from typing import List, Optional
 from pathlib import Path
+from typing import List, Optional
+
+from pydantic_settings import BaseSettings
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
+
 
 class Settings(BaseSettings):
     MONGODB_URL: str = "mongodb://localhost:27017"
@@ -11,8 +13,10 @@ class Settings(BaseSettings):
     DB_NAME: str = "timetable_db"
     SECRET_KEY: str = "supersecretkey123"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 4320 # 3 days
-    ALLOWED_ORIGINS: str = "http://localhost:3002,http://localhost:3000,http://localhost:3003,http://localhost:5173"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 4320  # 3 days
+    ALLOWED_ORIGINS: str = (
+        "http://localhost:3002,http://localhost:3000,http://localhost:3003,http://localhost:5173"
+    )
     SOLVER_TIME_LIMIT_SECONDS: int = 60
     AI_MODEL: str = "grok-1"
     OPENAI_API_KEY: Optional[str] = None
@@ -71,6 +75,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = BACKEND_DIR / ".env"
         extra = "ignore"
+
 
 settings = Settings()
 
