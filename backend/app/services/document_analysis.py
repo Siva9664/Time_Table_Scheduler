@@ -191,24 +191,24 @@ def merge_duplicate_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def analyze_academic_documents(
     documents: Iterable[ExtractedDocument],
     *,
-    model: Optional[str] = None,
-    api_base: str = "http://localhost:11434/v1",
-    api_key: Optional[str] = "local",
+    model: Optional[str] = "qwen-plus",
+    api_base: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    api_key: Optional[str] = None,
     timeout_seconds: int = 120,
     max_chars: int = 60_000,
 ) -> Dict[str, Any]:
-    """Return normalized academic rows, using a local model when configured."""
+    """Return normalized academic rows, using Qwen API model when configured."""
     docs = list(documents)
     warnings: List[str] = []
     deterministic_rows = _deterministic_extract(docs)
 
-    if model:
+    if model and api_key:
         try:
             raw = _call_local_model(
                 docs,
                 model=model,
                 api_base=api_base,
-                api_key=api_key or "local",
+                api_key=api_key,
                 timeout_seconds=timeout_seconds,
                 max_chars=max_chars,
             )
@@ -220,7 +220,7 @@ def analyze_academic_documents(
                 deterministic_score = _analysis_quality_score(deterministic_rows)
                 if deterministic_rows and deterministic_score > model_score:
                     warnings.append(
-                        "Local document model output was less structured than deterministic extraction; used deterministic rows."
+                        "Qwen document model output was less structured than deterministic extraction; used deterministic rows."
                     )
                     return {
                         "source": "deterministic",
@@ -229,17 +229,17 @@ def analyze_academic_documents(
                         "warnings": warnings,
                     }
                 return {
-                    "source": "local-model",
+                    "source": "qwen-api",
                     "model": model,
                     "extracted_timetable": merge_duplicate_rows(normalized),
                     "warnings": warnings,
                 }
-            warnings.append("Local document model returned no usable timetable rows; used deterministic fallback.")
+            warnings.append("Qwen document model returned no usable timetable rows; used deterministic fallback.")
         except Exception as exc:
-            warnings.append(f"Local document model failed: {exc}. Used deterministic fallback.")
+            warnings.append(f"Qwen document model failed: {exc}. Used deterministic fallback.")
     else:
         warnings.append(
-            "Local document model is not configured. Set DOCUMENT_ANALYSIS_MODEL to enable model-based extraction."
+            "Qwen API key is not configured. Set QWEN_API_KEY to enable Qwen-based document extraction."
         )
 
     return {
@@ -293,16 +293,7 @@ def _call_local_model(
     timeout_seconds: int,
     max_chars: int,
 ) -> str:
-    if _is_ollama_base(api_base):
-        return _call_ollama_native(
-            documents,
-            model=model,
-            api_base=api_base,
-            timeout_seconds=timeout_seconds,
-            max_chars=max_chars,
-        )
-
-    client = OpenAI(api_key=api_key, base_url=api_base.rstrip("/"), timeout=timeout_seconds)
+    client = OpenAI(api_key=api_key or "local", base_url=api_base.rstrip("/"), timeout=timeout_seconds)
     user_prompt = _build_user_prompt(documents, max_chars=max_chars)
     kwargs = {
         "model": model,
@@ -321,50 +312,6 @@ def _call_local_model(
     except Exception:
         response = client.chat.completions.create(**kwargs)
     return _strip_markdown(response.choices[0].message.content or "")
-
-
-def _call_ollama_native(
-    documents: List[ExtractedDocument],
-    *,
-    model: str,
-    api_base: str,
-    timeout_seconds: int,
-    max_chars: int,
-) -> str:
-    base = api_base.rstrip("/")
-    if base.endswith("/v1"):
-        base = base[:-3]
-    payload = {
-        "model": model,
-        "stream": False,
-        "think": False,
-        "format": "json",
-        "options": {
-            "temperature": 0,
-            "top_k": 1,
-            "top_p": 1,
-            "num_predict": 2048,
-            "num_ctx": 4096,
-        },
-        "messages": [
-            {"role": "system", "content": OLLAMA_SYSTEM_PROMPT},
-            {"role": "user", "content": _build_user_prompt(documents, max_chars=max_chars)},
-        ],
-    }
-    request = urllib.request.Request(
-        f"{base}/api/chat",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-        data = json.loads(response.read().decode("utf-8"))
-    return _strip_markdown(data.get("message", {}).get("content") or data.get("response") or "")
-
-
-def _is_ollama_base(api_base: str) -> bool:
-    normalized = (api_base or "").lower()
-    return "localhost:11434" in normalized or "127.0.0.1:11434" in normalized
 
 
 def _build_user_prompt(documents: List[ExtractedDocument], *, max_chars: int) -> str:

@@ -18,7 +18,7 @@ import { useToast } from '../../context/ToastContext';
 
 const TABS = [
   { id: 'departments', label: 'Departments', icon: Sparkles, fields: ['name', 'code'] },
-  { id: 'batches', label: 'Batches', icon: Sparkles, fields: ['name', 'start_time', 'end_time', 'period_duration'] },
+  { id: 'batches', label: 'Batches', icon: Sparkles, fields: ['name', 'start_time', 'end_time', 'period_duration', 'break_times', 'lunch_break'] },
   { id: 'classes', label: 'Classes', icon: Sparkles, fields: ['name', 'section', 'semester', 'student_count', 'department_code', 'batch_name'] },
   { id: 'rooms', label: 'Rooms', icon: Sparkles, fields: ['name', 'code', 'room_type', 'capacity', 'department_code'] },
   { id: 'subjects', label: 'Subjects', icon: Sparkles, fields: ['name', 'code', 'hours_per_week', 'requires_lab', 'department_codes', 'batch_name'] },
@@ -40,7 +40,7 @@ export default function DocumentExtractorModal({ isOpen, onClose, onImportSucces
   const { showToast } = useToast();
   const fileInputRef = useRef(null);
   
-  const [file, setFile] = useState(null);
+  const [files, setFiles] = useState([]);
   const [dragging, setDragging] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadingStage, setLoadingStage] = useState('');
@@ -51,7 +51,6 @@ export default function DocumentExtractorModal({ isOpen, onClose, onImportSucces
   const [warnings, setWarnings] = useState([]);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState(null);
-  const [useGemini, setUseGemini] = useState(false);
   
   const logsEndRef = useRef(null);
 
@@ -73,22 +72,39 @@ export default function DocumentExtractorModal({ isOpen, onClose, onImportSucces
     setDragging(false);
   };
 
+  const addFilesToQueue = (newFiles) => {
+    const validFiles = Array.from(newFiles);
+    setFiles(prev => {
+      const existingNames = new Set(prev.map(f => f.name));
+      const unique = validFiles.filter(f => !existingNames.has(f.name));
+      return [...prev, ...unique];
+    });
+  };
+
   const handleDrop = (e) => {
     e.preventDefault();
     setDragging(false);
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      setFile(e.dataTransfer.files[0]);
+      addFilesToQueue(e.dataTransfer.files);
     }
   };
 
   const handleFileChange = (e) => {
     if (e.target.files && e.target.files.length > 0) {
-      setFile(e.target.files[0]);
+      addFilesToQueue(e.target.files);
     }
   };
 
+  const removeFile = (index) => {
+    setFiles(prev => prev.filter((_, idx) => idx !== index));
+  };
+
+  const clearQueue = () => {
+    setFiles([]);
+  };
+
   const resetState = () => {
-    setFile(null);
+    setFiles([]);
     setExtractedData(null);
     setLoading(false);
     setLoadingStage('');
@@ -98,81 +114,131 @@ export default function DocumentExtractorModal({ isOpen, onClose, onImportSucces
   };
 
   const startExtraction = async () => {
-    if (!file) return;
+    if (files.length === 0) return;
 
     setLoading(true);
-    setLoadingStage('Starting extraction...');
     setProgress(0);
     setModelLogs('');
-    
-    const form = new FormData();
-    form.append('file', file);
-    if (useGemini) {
-      form.append('use_gemini', 'true');
-    }
+    setWarnings([]);
+
+    const mergedData = {
+      departments: [],
+      batches: [],
+      classes: [],
+      rooms: [],
+      subjects: [],
+      faculty: [],
+      mappings: []
+    };
+    const allWarnings = [];
 
     try {
       const token = localStorage.getItem('token');
-      // Step 1: Call extract endpoint with fetch to read stream
-      const response = await fetch(`${import.meta.env.VITE_API_URL || '/api'}/imports/extract-academic-data`, {
-        method: 'POST',
-        body: form,
-        headers: {
-          ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-        }
-      });
+      const totalFiles = files.length;
 
-      if (!response.ok) {
-        let errorData;
-        try {
-          errorData = await response.json();
-        } catch (e) {
-          errorData = { detail: response.statusText };
-        }
-        throw new Error(errorData.detail || 'Failed to extract data');
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      for (let i = 0; i < totalFiles; i++) {
+        const file = files[i];
+        const fileNum = i + 1;
         
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop(); // keep last incomplete line in buffer
+        setLoadingStage(`[File ${fileNum}/${totalFiles}] Extracting ${file.name}...`);
+        setModelLogs(prev => prev + `\n========================================\n🚀 [File ${fileNum}/${totalFiles}] Processing: ${file.name}\n========================================\n`);
 
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          
-          try {
-            const data = JSON.parse(line);
-            
-            if (data.status === 'log') {
-              setModelLogs(prev => prev + data.text);
-            } else if (data.status === 'progress') {
-              setLoadingStage(data.message);
-              setProgress(data.progress);
-            } else if (data.status === 'error') {
-              throw new Error(data.error);
-            } else if (data.status === 'success') {
-              const { extracted_data, warnings: serverWarnings, extractor } = data.data;
-              setExtractedData(extracted_data);
-              setWarnings(serverWarnings || []);
-              const totalItems = Object.values(extracted_data).reduce((sum, arr) => sum + arr.length, 0);
-              showToast(`Extracted ${totalItems} items from all sheets using ${extractor}!`, 'success');
-              return; // End extraction on success
+        const form = new FormData();
+        form.append('file', file);
+
+        const response = await fetch(`${import.meta.env.VITE_API_URL || '/api'}/imports/extract-academic-data`, {
+          method: 'POST',
+          body: form,
+          headers: {
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+          }
+        });
+
+        if (!response.ok) {
+          let errorData;
+          try { errorData = await response.json(); } catch (e) { errorData = { detail: response.statusText }; }
+          const errMsg = errorData.detail || `Failed to extract file ${file.name}`;
+          setModelLogs(prev => prev + `\n❌ Error: ${errMsg}\n`);
+          allWarnings.push(`${file.name}: ${errMsg}`);
+          continue;
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop();
+
+          for (const line of lines) {
+            if (!line.trim()) continue;
+
+            try {
+              const data = JSON.parse(line);
+
+              if (data.status === 'log') {
+                console.log('[AI Log]', data.text);
+                setModelLogs(prev => prev + data.text);
+              } else if (data.status === 'progress') {
+                console.log(`[AI Progress ${data.progress}%]`, data.message);
+                const overallPct = Math.round(((i / totalFiles) * 100) + (data.progress / totalFiles));
+                setProgress(overallPct);
+                setLoadingStage(`[File ${fileNum}/${totalFiles}] ${data.message}`);
+              } else if (data.status === 'error') {
+                console.error('[AI Error]', data.error);
+                setModelLogs(prev => prev + `\n❌ ${data.error}\n`);
+                allWarnings.push(`${file.name}: ${data.error}`);
+              } else if (data.status === 'success') {
+                const { extracted_data, warnings: serverWarnings } = data.data;
+                if (serverWarnings && serverWarnings.length > 0) {
+                  allWarnings.push(...serverWarnings.map(w => `${file.name}: ${w}`));
+                }
+                if (extracted_data) {
+                  Object.keys(mergedData).forEach(key => {
+                    if (extracted_data[key] && Array.isArray(extracted_data[key])) {
+                      mergedData[key].push(...extracted_data[key]);
+                    }
+                  });
+                }
+              }
+            } catch (e) {
+              console.error('Error parsing stream line:', e, line);
             }
-          } catch (e) {
-            console.error('Error parsing stream line:', e, line);
           }
         }
       }
+
+      // Deduplicate merged items by key properties
+      const dedupeBy = (arr, keyFn) => {
+        const seen = new Set();
+        return arr.filter(item => {
+          const k = keyFn(item);
+          if (!k || seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+      };
+
+      mergedData.departments = dedupeBy(mergedData.departments, d => (d.code || d.name || '').toLowerCase());
+      mergedData.batches = dedupeBy(mergedData.batches, b => (b.name || '').toLowerCase());
+      mergedData.classes = dedupeBy(mergedData.classes, c => `${c.name}-${c.section || ''}`.toLowerCase());
+      mergedData.rooms = dedupeBy(mergedData.rooms, r => (r.code || r.name || '').toLowerCase());
+      mergedData.subjects = dedupeBy(mergedData.subjects, s => (s.code || s.name || '').toLowerCase());
+      mergedData.faculty = dedupeBy(mergedData.faculty, f => (f.email || f.name || '').toLowerCase());
+
+      setExtractedData(mergedData);
+      setWarnings(allWarnings);
+      setProgress(100);
+      const totalItems = Object.values(mergedData).reduce((sum, arr) => sum + arr.length, 0);
+      showToast(`Extracted and merged ${totalItems} items across ${files.length} file(s)!`, 'success');
     } catch (err) {
       console.error(err);
-      showToast(err.message || 'Data extraction failed', 'error');
+      showToast(err.message || 'Queue extraction failed', 'error');
     } finally {
       setLoading(false);
       setLoadingStage('');
@@ -181,35 +247,69 @@ export default function DocumentExtractorModal({ isOpen, onClose, onImportSucces
   };
 
   const startExcelExtraction = async () => {
-    if (!file) return;
+    if (files.length === 0) return;
     
     setLoading(true);
-    setLoadingStage('Parsing Excel File...');
-    setProgress(50);
-    setModelLogs('Sending Excel file to strict parser endpoint...\n');
+    setProgress(0);
+    setModelLogs('');
+    setWarnings([]);
 
-    const form = new FormData();
-    form.append('file', file);
+    const mergedData = {
+      departments: [],
+      batches: [],
+      classes: [],
+      rooms: [],
+      subjects: [],
+      faculty: [],
+      mappings: []
+    };
+    const allWarnings = [];
 
     try {
-      const response = await api.post('/imports/extract-excel-data', form);
-      const data = response.data;
-      
-      if (data.status === 'success') {
-         const { extracted_data, warnings: serverWarnings, extractor } = data.data;
-         setExtractedData(extracted_data);
-         setWarnings(serverWarnings || []);
-         setProgress(100);
-         const totalItems = Object.values(extracted_data).reduce((sum, arr) => sum + arr.length, 0);
-         setModelLogs(prev => prev + `Success: Extracted ${totalItems} rows from Excel sheets.\n`);
-         showToast(`Extracted ${totalItems} items strictly from Excel!`, 'success');
-      } else {
-         throw new Error('Failed to parse Excel');
+      const totalFiles = files.length;
+
+      for (let i = 0; i < totalFiles; i++) {
+        const file = files[i];
+        const fileNum = i + 1;
+        setLoadingStage(`[File ${fileNum}/${totalFiles}] Parsing Excel ${file.name}...`);
+        setProgress(Math.round((i / totalFiles) * 100));
+        setModelLogs(prev => prev + `\n--- Processing Excel File [${fileNum}/${totalFiles}]: ${file.name} ---\n`);
+
+        const form = new FormData();
+        form.append('file', file);
+
+        try {
+          const response = await api.post('/imports/extract-excel-data', form);
+          const data = response.data;
+          
+          if (data.status === 'success') {
+             const { extracted_data, warnings: serverWarnings } = data.data;
+             if (serverWarnings) allWarnings.push(...serverWarnings.map(w => `${file.name}: ${w}`));
+             if (extracted_data) {
+               Object.keys(mergedData).forEach(key => {
+                 if (extracted_data[key] && Array.isArray(extracted_data[key])) {
+                   mergedData[key].push(...extracted_data[key]);
+                 }
+               });
+             }
+             setModelLogs(prev => prev + `✓ Completed Excel extraction for ${file.name}\n`);
+          } else {
+             throw new Error(`Failed to parse ${file.name}`);
+          }
+        } catch (fileErr) {
+          setModelLogs(prev => prev + `❌ Error: ${fileErr.message}\n`);
+          allWarnings.push(`${file.name}: ${fileErr.message}`);
+        }
       }
+
+      setExtractedData(mergedData);
+      setWarnings(allWarnings);
+      setProgress(100);
+      const totalItems = Object.values(mergedData).reduce((sum, arr) => sum + arr.length, 0);
+      showToast(`Extracted ${totalItems} items strictly from Excel queue!`, 'success');
     } catch (err) {
       console.error(err);
-      setModelLogs(prev => prev + `Error: ${err.message}\n`);
-      showToast(err.response?.data?.detail || err.message || 'Excel extraction failed', 'error');
+      showToast(err.message || 'Excel queue extraction failed', 'error');
     } finally {
       setLoading(false);
       setLoadingStage('');
@@ -320,7 +420,7 @@ export default function DocumentExtractorModal({ isOpen, onClose, onImportSucces
             </div>
             <div>
               <h2 className="text-xl font-black text-slate-800 tracking-tight">AI Document Extractor & Template Filler</h2>
-              <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider">Powered by PaddleOCR & Ollama</p>
+              <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider">Powered by PaddleOCR & Qwen Cloud API</p>
             </div>
           </div>
           <button
@@ -341,10 +441,10 @@ export default function DocumentExtractorModal({ isOpen, onClose, onImportSucces
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
                 onClick={() => fileInputRef.current?.click()}
-                className={`border-3 border-dashed rounded-3xl p-12 text-center cursor-pointer transition-all duration-300 ${
+                className={`border-3 border-dashed rounded-3xl p-10 text-center cursor-pointer transition-all duration-300 ${
                   dragging
                     ? 'border-violet-500 bg-violet-50/50 scale-[1.01]'
-                    : file
+                    : files.length > 0
                     ? 'border-emerald-500 bg-emerald-50/10'
                     : 'border-slate-200 hover:border-violet-400 hover:bg-slate-50/50'
                 }`}
@@ -352,70 +452,90 @@ export default function DocumentExtractorModal({ isOpen, onClose, onImportSucces
                  <input
                   ref={fileInputRef}
                   type="file"
+                  multiple
                   onChange={handleFileChange}
                   className="hidden"
                 />
-                <div className="flex flex-col items-center gap-4">
-                  <div className={`w-16 h-16 rounded-2xl flex items-center justify-center shadow-lg transition-transform ${
-                    file ? 'bg-emerald-500 text-white' : 'bg-violet-100 text-violet-600'
+                <div className="flex flex-col items-center gap-3">
+                  <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shadow-lg transition-transform ${
+                    files.length > 0 ? 'bg-emerald-500 text-white' : 'bg-violet-100 text-violet-600'
                   }`}>
-                    <Upload size={30} />
+                    <Upload size={26} />
                   </div>
-                  {file ? (
-                    <div>
-                      <p className="text-lg font-bold text-emerald-800">{file.name}</p>
-                      <p className="text-sm font-medium text-emerald-600 mt-1">{(file.size / (1024 * 1024)).toFixed(2)} MB • Ready to Extract</p>
-                    </div>
-                  ) : (
-                    <div>
-                      <p className="text-lg font-extrabold text-slate-700">Drag & Drop Academic File or Scanned Image</p>
-                      <p className="text-sm font-medium text-slate-400 mt-2">Supports PDF, Images, Excel, Word, or Text files up to 15MB</p>
-                    </div>
-                  )}
+                  <div>
+                    <p className="text-lg font-extrabold text-slate-700">Drag & Drop Academic File(s) or Scanned Images</p>
+                    <p className="text-sm font-medium text-slate-400 mt-1">Select multiple PDF, Image, Excel, Word, or Text files to process in queue</p>
+                  </div>
                 </div>
               </div>
 
-              {/* Action Button */}
-              {file && (
-                <div className="mt-8 flex flex-col items-center">
-                  
-                  {/* Gemini API Toggle */}
-                  <div className="w-full max-w-md bg-white border border-slate-200 rounded-2xl p-4 mb-6 shadow-sm">
-                    <label className="flex items-center justify-between cursor-pointer">
-                      <div className="flex flex-col">
-                        <span className="text-sm font-bold text-slate-700">Use Gemini API</span>
-                        <span className="text-xs text-slate-500 mt-0.5">Much faster extraction using Gemini API</span>
-                      </div>
-                      <div className="relative">
-                        <input
-                          type="checkbox"
-                          className="sr-only"
-                          checked={useGemini}
-                          onChange={(e) => setUseGemini(e.target.checked)}
-                        />
-                        <div className={`block w-10 h-6 rounded-full transition-colors ${useGemini ? 'bg-violet-500' : 'bg-slate-300'}`}></div>
-                        <div className={`absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${useGemini ? 'transform translate-x-4' : ''}`}></div>
-                      </div>
-                    </label>
+              {/* Files Queue List */}
+              {files.length > 0 && (
+                <div className="mt-6 bg-slate-50 border border-slate-200 rounded-2xl p-5 shadow-sm">
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-200 mb-3">
+                    <span className="text-xs font-black text-slate-500 uppercase tracking-wider">
+                      Selected Queue ({files.length} {files.length === 1 ? 'file' : 'files'})
+                    </span>
+                    <button
+                      onClick={clearQueue}
+                      className="text-xs font-extrabold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-3 py-1 rounded-lg transition-colors"
+                    >
+                      Clear All
+                    </button>
                   </div>
 
-                  <button
-                    onClick={startExtraction}
-                    className="flex items-center gap-3 px-8 py-4 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white text-base font-black rounded-2xl shadow-xl hover:shadow-2xl transition-all duration-200 active:scale-95 group w-full justify-center"
-                  >
-                    Start Extraction Pipeline
-                    <ArrowRight size={18} className="transform group-hover:translate-x-1 transition-transform" />
-                  </button>
-                  
-                  {file && (file.name.toLowerCase().endsWith('.xlsx') || file.name.toLowerCase().endsWith('.xls')) && (
+                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
+                    {files.map((f, idx) => (
+                      <div key={idx} className="flex items-center justify-between bg-white border border-slate-200 rounded-xl px-4 py-2.5 shadow-2xs">
+                        <div className="flex items-center gap-3 overflow-hidden">
+                          <span className="w-6 h-6 rounded-full bg-violet-100 text-violet-700 text-xs font-black flex items-center justify-center shrink-0">
+                            {idx + 1}
+                          </span>
+                          <div className="truncate">
+                            <p className="text-sm font-bold text-slate-800 truncate">{f.name}</p>
+                            <p className="text-xs font-medium text-slate-400">{(f.size / (1024 * 1024)).toFixed(2)} MB</p>
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => removeFile(idx)}
+                          className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-rose-500 hover:bg-rose-50 transition-colors shrink-0"
+                          title="Remove file"
+                        >
+                          <X size={15} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="mt-4 flex items-center gap-3">
                     <button
-                      onClick={startExcelExtraction}
-                      className="mt-3 flex items-center gap-3 px-8 py-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-base font-black rounded-2xl shadow-xl hover:shadow-2xl transition-all duration-200 active:scale-95 group w-full justify-center"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="text-xs font-extrabold text-violet-600 hover:text-violet-700 bg-violet-100/60 hover:bg-violet-100 px-4 py-2 rounded-xl transition-colors"
                     >
-                      Extract Excel Data (Strict Mode)
-                      <FileSpreadsheet size={18} className="transform group-hover:translate-x-1 transition-transform" />
+                      + Add More Files
                     </button>
-                  )}
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div className="mt-5 flex flex-col gap-3">
+                    <button
+                      onClick={startExtraction}
+                      className="flex items-center gap-3 px-8 py-4 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700 text-white text-base font-black rounded-2xl shadow-xl hover:shadow-2xl transition-all duration-200 active:scale-95 group w-full justify-center"
+                    >
+                      Start Extraction Pipeline ({files.length} {files.length === 1 ? 'File' : 'Files'})
+                      <ArrowRight size={18} className="transform group-hover:translate-x-1 transition-transform" />
+                    </button>
+
+                    {files.some(f => f.name.toLowerCase().endsWith('.xlsx') || f.name.toLowerCase().endsWith('.xls')) && (
+                      <button
+                        onClick={startExcelExtraction}
+                        className="flex items-center gap-3 px-8 py-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-base font-black rounded-2xl shadow-xl hover:shadow-2xl transition-all duration-200 active:scale-95 group w-full justify-center"
+                      >
+                        Extract Excel Queue (Strict Mode)
+                        <FileSpreadsheet size={18} className="transform group-hover:translate-x-1 transition-transform" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -442,13 +562,13 @@ export default function DocumentExtractorModal({ isOpen, onClose, onImportSucces
                 </div>
                 
                 {/* Live Model Logs */}
-                <div className="w-full bg-slate-900 rounded-xl overflow-hidden shadow-xl border border-slate-700 flex flex-col h-48">
+                <div className="w-full bg-slate-900 rounded-xl overflow-hidden shadow-xl border border-slate-700 flex flex-col h-115 ">
                   <div className="bg-slate-800 px-4 py-2 flex items-center justify-between text-xs font-bold text-slate-400 border-b border-slate-700">
                     <span className="flex items-center gap-2">
                       <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
                       Live AI Logs
                     </span>
-                    <span>Qwen2.5-VL</span>
+                    <span>Qwen API</span>
                   </div>
                   <div className="p-4 text-emerald-400 font-mono text-xs overflow-y-auto h-full text-left whitespace-pre-wrap flex-1 custom-scrollbar">
                     {modelLogs || 'Waiting for AI response stream...'}

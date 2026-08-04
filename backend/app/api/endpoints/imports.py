@@ -906,10 +906,10 @@ ACADEMIC_EXTRACTOR_SYSTEM_PROMPT = """You are a STRICT academic data extractor.
 ## ABSOLUTE RULES — NEVER VIOLATE THESE
 
 1. **EXTRACT ONLY.** You may ONLY output data that is EXPLICITLY and LITERALLY present in the provided document text/image.
-2. **NO HALLUCINATION.** Do NOT invent, guess, assume, infer, or generate ANY data that is not directly written in the document. This includes names, codes, emails, times, numbers, or any other value.
+2. **NO HALLUCINATION.** Do NOT invent, guess, assume, infer, or generate ANY data that is not directly written in the document. This includes names, codes, times, numbers, or any other value.
 3. **NO EXAMPLES.** Do NOT use placeholder values such as "faculty@university.edu", "DEPT_CODE", "SUBJ101", "Room 101", or any example-like strings. If the real value is not in the document, use "" (empty string) or null.
 4. **NO MOCK DATA.** Do NOT fill in "reasonable" defaults or "typical" values. Leave every field empty ("") if it cannot be found verbatim in the source document.
-5. **MISSING = EMPTY.** If a field (email, code, section, department, batch, room, etc.) is not explicitly stated in the document, set it to "" or null. Do not construct or fabricate it.
+5. **MISSING = EMPTY.** If a field (code, section, department, batch, room, etc.) is not explicitly stated in the document, set it to "" or null. Do not construct or fabricate it.
 
 ## Task
 
@@ -924,7 +924,7 @@ Return ONLY a single raw JSON object — no markdown fences, no reasoning text, 
     {"name": "<exact name from doc>", "code": "<exact code from doc or ''>"}
   ],
   "batches": [
-    {"name": "<exact name from doc>", "start_time": "<HH:MM or ''>", "end_time": "<HH:MM or ''>", "period_duration": <number or 60>}
+    {"name": "<exact name from doc>", "start_time": "<exact start time e.g. '09:00' or ''>", "end_time": "<exact end time e.g. '16:30' or ''>", "period_duration": <number of minutes e.g. 50 or 60>, "break_times": "<exact break times e.g. '11:00-11:15' or ''>", "lunch_break": "<exact lunch break time e.g. '13:00-14:00' or ''>"}
   ],
   "classes": [
     {"name": "<exact name from doc>", "section": "<exact section from doc or ''>", "department_code": "<exact code from doc or ''>", "batch_name": "<exact name from doc or ''>", "semester": <number or null>, "student_count": <number or 0>}
@@ -945,10 +945,10 @@ Return ONLY a single raw JSON object — no markdown fences, no reasoning text, 
 
 ## Additional Rules
 
+- For batches: Look at timetable period column/row slot headers or schedule headers to extract start_time (e.g. '09:00'), end_time (e.g. '16:30'), period_duration (e.g. 50 or 60), break_times (e.g. '11:00-11:15'), and lunch_break (e.g. '13:00-14:00').
 - room_type must be one of: ["lecture", "lab", "seminar"]. Default to "lecture" only if the room is mentioned but its type is not specified.
 - If the document contains NO information for a category (e.g. no rooms mentioned), return an empty list [] for that key.
 - Do NOT output any markdown code blocks, reasoning, commentary, or extra text. Output ONLY the raw JSON object.
-- REMEMBER: Every single value in your output MUST come directly from the document. If you are not 100% sure a value appears in the document, use "" or null instead.
 """
 
 
@@ -1035,14 +1035,12 @@ def _dedupe_extracted_list(items: list) -> list:
 @router.post('/extract-academic-data')
 async def extract_academic_data(
     file: UploadFile = File(...),
-    use_gemini: bool = Form(False),
-    gemini_api_key: Optional[str] = Form(None),
+    qwen_api_key: Optional[str] = Form(None),
     db=Depends(get_tenant_db),
     _current_user: dict = Depends(get_admin_user),
 ):
     """
-    Extract academic data from a document (image/PDF) using OCR and Ollama concurrently.
-    Splits multi-sheet Excel files into chunks and processes each separately.
+    Extract academic data from a document (image/PDF) using OCR and Qwen API concurrently.
     Returns a stream of NDJSON progress updates and the final merged structured entities.
     """
     from ...core.config import settings
@@ -1114,17 +1112,9 @@ async def extract_academic_data(
 
         async def qwen_task(images, wait_for_text=False):
             try:
-                active_key = gemini_api_key or settings.GEMINI_API_KEY
-                if use_gemini:
-                    if not active_key:
-                        raise ValueError("Gemini API key is not configured. Please set GEMINI_API_KEY in the backend .env file.")
-                    model_name = "gemini-2.5-flash"
-                    api_base = "https://generativelanguage.googleapis.com/v1beta/openai"
-                else:
-                    model_name = settings.DOCUMENT_ANALYSIS_MODEL or "qwen2.5vl"
-                    api_base = settings.DOCUMENT_ANALYSIS_API_BASE.rstrip("/")
-                    if api_base.endswith("/v1"):
-                        api_base = api_base[:-3]
+                active_key = qwen_api_key or settings.active_document_analysis_api_key
+                model_name = settings.active_document_analysis_model or "qwen-plus"
+                api_base = settings.active_document_analysis_api_base.rstrip("/")
                 
                 timeout = max(settings.DOCUMENT_ANALYSIS_TIMEOUT_SECONDS, 900)
                 
@@ -1143,29 +1133,22 @@ async def extract_academic_data(
                         chunks = _split_text_into_chunks(doc_text_result["text"], 4000)
 
                 if not chunks or (not is_image and not chunks[0].strip()):
-                    await main_queue.put(("data", json.dumps({"status": "log", "text": f"\n[{'Gemini' if use_gemini else 'Qwen'}] No data to process.\n"}) + "\n"))
+                    await main_queue.put(("data", json.dumps({"status": "log", "text": "\n[Qwen] No data to process.\n"}) + "\n"))
                     return
 
                 for i, chunk in enumerate(chunks):
                     progress_pct = 30 + int(60 * (i / len(chunks)))
-                    await main_queue.put(("data", json.dumps({"status": "progress", "progress": progress_pct, "message": f"[{'Gemini' if use_gemini else 'Qwen'}] Processing part {i+1}/{len(chunks)}..."}) + "\n"))
+                    await main_queue.put(("data", json.dumps({"status": "progress", "progress": progress_pct, "message": f"[Qwen API] Processing part {i+1}/{len(chunks)}..."}) + "\n"))
                     
                     messages = [{"role": "system", "content": ACADEMIC_EXTRACTOR_SYSTEM_PROMPT}]
                     if is_image:
-                        if use_gemini:
-                            messages.append({
-                                "role": "user",
-                                "content": [
-                                    {"type": "text", "text": "Extract ONLY the academic entities that are explicitly and literally visible in this document image. Do NOT invent, guess, or hallucinate any values. Any field not clearly present in the image must be set to \"\" or null. Return ONLY a valid JSON object with no extra text."},
-                                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{chunk}"}}
-                                ]
-                            })
-                        else:
-                            messages.append({
-                                "role": "user",
-                                "content": "Extract ONLY the academic entities that are explicitly and literally visible in this document image. Do NOT invent, guess, or hallucinate any values. Any field not clearly present in the image must be set to \"\" or null. Return ONLY a valid JSON object with no extra text.",
-                                "images": [chunk]
-                            })
+                        messages.append({
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": "Extract ONLY the academic entities that are explicitly and literally visible in this document image. Do NOT invent, guess, or hallucinate any values. Any field not clearly present in the image must be set to \"\" or null. Return ONLY a valid JSON object with no extra text."},
+                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{chunk}"}}
+                            ]
+                        })
                     else:
                         messages.append({
                             "role": "user",
@@ -1178,24 +1161,15 @@ async def extract_academic_data(
                             )
                         })
 
-                    if use_gemini:
-                        payload = {
-                            "model": model_name,
-                            "stream": True,
-                            "temperature": 0.0,
-                            "max_tokens": 8192,
-                            "response_format": {"type": "json_object"},
-                            "messages": messages
-                        }
-                        endpoint = f"{api_base}/chat/completions"
-                    else:
-                        payload = {
-                            "model": model_name,
-                            "stream": True,
-                            "options": {"temperature": 0.0, "num_predict": 4096, "num_ctx": 8192},
-                            "messages": messages
-                        }
-                        endpoint = f"{api_base}/api/chat"
+                    payload = {
+                        "model": model_name,
+                        "stream": True,
+                        "temperature": 0.0,
+                        "max_tokens": 8192,
+                        "response_format": {"type": "json_object"},
+                        "messages": messages
+                    }
+                    endpoint = f"{api_base}/chat/completions" if not api_base.endswith("/chat/completions") else api_base
 
                     req_data = json.dumps(payload).encode("utf-8")
                     req = urllib.request.Request(
@@ -1204,7 +1178,7 @@ async def extract_academic_data(
                         headers={"Content-Type": "application/json"},
                         method="POST"
                     )
-                    if use_gemini and active_key:
+                    if active_key:
                         req.add_header("Authorization", f"Bearer {active_key}")
 
                     stream_queue = asyncio.Queue()
@@ -1235,39 +1209,32 @@ async def extract_academic_data(
                                 if not data_str:
                                     continue
                                 
-                                if use_gemini:
-                                    if data_str.startswith("data: "):
-                                        data_str = data_str[6:]
-                                    if data_str == "[DONE]":
-                                        continue
-                                    
-                                    chunk_obj = json.loads(data_str)
-                                    choices = chunk_obj.get("choices", [])
-                                    if choices:
-                                        delta = choices[0].get("delta", {})
-                                        token = delta.get("content", "")
-                                else:
-                                    chunk_obj = json.loads(data_str)
-                                    token = chunk_obj.get("message", {}).get("content", "")
+                                if data_str.startswith("data: "):
+                                    data_str = data_str[6:]
+                                if data_str == "[DONE]":
+                                    continue
+                                
+                                chunk_obj = json.loads(data_str)
+                                choices = chunk_obj.get("choices", [])
+                                if choices:
+                                    delta = choices[0].get("delta", {})
+                                    token = delta.get("content", "")
                                 
                                 if token:
                                     content_str += token
                                     await main_queue.put(("data", json.dumps({"status": "log", "text": token}) + "\n"))
-                            except Exception as e:
+                            except Exception:
                                 pass
                                 
                     content_str = content_str.strip()
-                    # Strip Gemini thinking/reasoning tokens (gemini-2.5-flash emits <think>...</think>)
                     import re as _re
                     content_str = _re.sub(r'<think>.*?</think>', '', content_str, flags=_re.DOTALL).strip()
-                    # Strip all markdown code fences (```json ... ``` or ``` ... ```)
                     content_str = _re.sub(r'^```(?:json)?\s*', '', content_str).strip()
                     content_str = _re.sub(r'\s*```$', '', content_str).strip()
 
                     try:
                         parsed = json.loads(content_str)
                     except json.JSONDecodeError:
-                        # Try to extract the first complete JSON object from the response
                         json_start = content_str.find('{')
                         json_end = content_str.rfind('}')
                         if json_start != -1 and json_end != -1:
@@ -1275,12 +1242,12 @@ async def extract_academic_data(
                                 parsed = json.loads(content_str[json_start:json_end + 1])
                             except json.JSONDecodeError as inner_e:
                                 doc_text_result["warnings"].append(
-                                    f"Chunk {i+1}: Model returned invalid JSON and could not be parsed ({inner_e}). "
-                                    "Try again or use a different file format."
+                                    f"Chunk {i+1}: Qwen model returned invalid JSON ({inner_e}). "
+                                    "Try again or check file input."
                                 )
                                 continue
                         else:
-                            doc_text_result["warnings"].append(f"Chunk {i+1}: Could not parse JSON from model response.")
+                            doc_text_result["warnings"].append(f"Chunk {i+1}: Could not parse JSON from Qwen response.")
                             continue
 
                     for key in extracted_data_result.keys():
@@ -1291,15 +1258,11 @@ async def extract_academic_data(
                             
             except urllib.error.HTTPError as http_err:
                 error_body = http_err.read().decode("utf-8", errors="replace") if hasattr(http_err, 'read') else str(http_err)
-                target = "Gemini" if use_gemini else "Qwen"
-                await main_queue.put(("data", json.dumps({"status": "error", "error": f"[{target}] HTTP {http_err.code}: {error_body[:500]}"}) + "\n"))
+                await main_queue.put(("data", json.dumps({"status": "error", "error": f"[Qwen API] HTTP {http_err.code}: {error_body[:500]}"}) + "\n"))
             except urllib.error.URLError as url_err:
-                target = "Gemini API" if use_gemini else "local Ollama"
-                prefix = "Gemini" if use_gemini else "Qwen"
-                await main_queue.put(("data", json.dumps({"status": "error", "error": f"[{prefix}] Cannot connect to {target} ({api_base}). Reason: {url_err.reason}"}) + "\n"))
+                await main_queue.put(("data", json.dumps({"status": "error", "error": f"[Qwen API] Cannot connect to Qwen API ({api_base}). Reason: {url_err.reason}"}) + "\n"))
             except Exception as e:
-                prefix = "Gemini" if use_gemini else "Qwen"
-                await main_queue.put(("data", json.dumps({"status": "error", "error": f"[{prefix}] Error: {e}"}) + "\n"))
+                await main_queue.put(("data", json.dumps({"status": "error", "error": f"[Qwen API] Error: {e}"}) + "\n"))
             finally:
                 await main_queue.put(("task_done", "qwen"))
 
@@ -1317,18 +1280,64 @@ async def extract_academic_data(
                 asyncio.create_task(qwen_task([], wait_for_text=True))
                 active_tasks += 1
                 
+            import sys
             # Consume from main_queue
-            while active_tasks > 0:
-                msg_type, data = await main_queue.get()
+            while active_tasks > 0 or not main_queue.empty():
+                try:
+                    msg_type, data = await asyncio.wait_for(main_queue.get(), timeout=0.1)
+                except asyncio.TimeoutError:
+                    if active_tasks == 0:
+                        break
+                    continue
+
                 if msg_type == "data":
+                    try:
+                        parsed_data = json.loads(data.strip())
+                        status = parsed_data.get("status")
+                        if status == "log":
+                            sys.stdout.write(parsed_data.get("text", ""))
+                            sys.stdout.flush()
+                        elif status == "progress":
+                            print(f"\n[AI EXTRACTOR {parsed_data.get('progress')}%] {parsed_data.get('message')}", flush=True)
+                        elif status == "error":
+                            print(f"\n[AI EXTRACTOR ERROR] {parsed_data.get('error')}", flush=True)
+                    except Exception:
+                        pass
                     yield data
                 elif msg_type == "task_done":
                     active_tasks -= 1
                     
-            await main_queue.put(("data", json.dumps({"status": "progress", "progress": 95, "message": "Merging and deduplicating results..."}) + "\n"))
+            print("\n[AI EXTRACTOR 95%] Merging and deduplicating results...", flush=True)
+            yield json.dumps({"status": "progress", "progress": 95, "message": "Merging and deduplicating results..."}) + "\n"
             
+            # Post-process faculty: generate dummy email if missing
+            faculty_email_map = {}
+            for idx, fac in enumerate(extracted_data_result.get("faculty", []), start=1):
+                fac_name = (fac.get("name") or "").strip()
+                fac_email = (fac.get("email") or "").strip()
+                if not fac_email:
+                    if fac_name:
+                        clean_name = _re.sub(r'[^a-zA-Z0-9_]', '.', fac_name.lower().replace(' ', '.')).strip('.')
+                        clean_name = _re.sub(r'\.+', '.', clean_name)
+                        fac_email = f"{clean_name}@institution.edu" if clean_name else f"faculty_{idx}@institution.edu"
+                    else:
+                        fac_email = f"faculty_{idx}@institution.edu"
+                    fac["email"] = fac_email
+                if fac_name:
+                    faculty_email_map[fac_name.lower()] = fac_email
+
+            # Post-process mappings: ensure faculty_email is populated if missing
+            for m in extracted_data_result.get("mappings", []):
+                if not m.get("faculty_email"):
+                    fac_name = (m.get("faculty_name") or "").strip().lower()
+                    if fac_name in faculty_email_map:
+                        m["faculty_email"] = faculty_email_map[fac_name]
+
             for key in extracted_data_result:
                 extracted_data_result[key] = _dedupe_extracted_list(extracted_data_result[key])
+
+            total_extracted = sum(len(v) for v in extracted_data_result.values())
+            print(f"\n[AI EXTRACTOR SUCCESS] Extracted {total_extracted} items from {file.filename}\n", flush=True)
 
             yield json.dumps({
                 "status": "success",
@@ -1341,6 +1350,7 @@ async def extract_academic_data(
             }) + "\n"
 
         except Exception as general_exc:
+            print(f"\n[AI EXTRACTOR UNEXPECTED ERROR] {str(general_exc)}\n", flush=True)
             yield json.dumps({"status": "error", "error": f"Unexpected error: {str(general_exc)}"}) + "\n"
             
     return StreamingResponse(generate_progress(), media_type="application/x-ndjson")

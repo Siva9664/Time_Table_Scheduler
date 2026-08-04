@@ -459,9 +459,9 @@ async def generate_constraints_from_files(
     context = _build_ai_constraint_context(db, periods_per_day)
     document_analysis = analyze_academic_documents(
         extracted_documents,
-        model=settings.DOCUMENT_ANALYSIS_MODEL,
-        api_base=settings.DOCUMENT_ANALYSIS_API_BASE,
-        api_key=settings.DOCUMENT_ANALYSIS_API_KEY,
+        model=settings.active_document_analysis_model,
+        api_base=settings.active_document_analysis_api_base,
+        api_key=settings.active_document_analysis_api_key,
         timeout_seconds=settings.DOCUMENT_ANALYSIS_TIMEOUT_SECONDS,
         max_chars=settings.DOCUMENT_ANALYSIS_MAX_CHARS,
     )

@@ -16,7 +16,12 @@ import {
   User,
   Download,
   Upload,
-  FileText
+  FileText,
+  Building2,
+  Layers,
+  Settings as SettingsIcon,
+  Sparkles,
+  GitMerge
 } from 'lucide-react';
 import DocumentExtractorModal from './DocumentExtractorModal';
 
@@ -134,13 +139,24 @@ export default function Dashboard() {
           </h1>
           <div className="h-1.5 w-20 bg-primary-500 rounded-full mt-2"></div>
         </div>
-        <div className="bg-white px-4 py-2 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-3">
-          <div className="w-10 h-10 bg-primary-100 text-primary-600 rounded-xl flex items-center justify-center">
-            <User size={20} />
-          </div>
-          <div>
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Logged in as</p>
-            <p className="text-sm font-black text-slate-700">{user?.full_name || user?.username}</p>
+        <div className="flex flex-wrap items-center gap-3">
+          {admin && (
+            <button
+              onClick={() => navigate('/generate')}
+              className="flex items-center gap-2 px-5 py-2.5 rounded-2xl bg-gradient-to-r from-primary-600 to-indigo-600 text-white font-black text-sm shadow-md hover:shadow-xl hover:scale-105 active:scale-95 transition-all cursor-pointer"
+            >
+              <Sparkles size={18} />
+              Generate Timetable
+            </button>
+          )}
+          <div className="bg-white px-4 py-2 rounded-2xl shadow-sm border border-slate-100 flex items-center gap-3">
+            <div className="w-10 h-10 bg-primary-100 text-primary-600 rounded-xl flex items-center justify-center">
+              <User size={20} />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Logged in as</p>
+              <p className="text-sm font-black text-slate-700">{user?.full_name || user?.username}</p>
+            </div>
           </div>
         </div>
       </header>
@@ -173,7 +189,7 @@ export default function Dashboard() {
           <LayoutDashboard size={24} className="text-primary-500" />
           Quick Actions
         </h2>
-        <div className="flex flex-wrap gap-4">
+        <div className="flex flex-wrap gap-3">
           {admin ? (
             <>
               <input
@@ -186,9 +202,16 @@ export default function Dashboard() {
                 onChange={handleFullDataFetch}
                 className="hidden"
               />
-              <ActionButton icon={BookOpen} label="Manage Subjects" color="bg-slate-700" onClick={() => navigate('/subjects')} />
-              <ActionButton icon={Users} label="Faculty Mapping" color="bg-blue-600" onClick={() => navigate('/mapping')} />
-              <ActionButton icon={Calendar} label="View Timetables" color="bg-orange-500" onClick={() => navigate('/view')} />
+              <ActionButton icon={FileText} label="Extract & Fill Data" color="bg-gradient-to-r from-violet-600 to-purple-600" onClick={() => setDocumentExtractorOpen(true)} />
+              <ActionButton icon={Sparkles} label="Generate Timetable" color="bg-gradient-to-r from-primary-600 to-blue-600" onClick={() => navigate('/generate')} />
+              <ActionButton icon={Calendar} label="View Timetables" color="bg-amber-500" onClick={() => navigate('/view')} />
+              <ActionButton icon={Building2} label="Departments" color="bg-indigo-600" onClick={() => navigate('/departments')} />
+              <ActionButton icon={Layers} label="Batches" color="bg-cyan-600" onClick={() => navigate('/batches')} />
+              <ActionButton icon={GraduationCap} label="Classes" color="bg-sky-600" onClick={() => navigate('/classes')} />
+              <ActionButton icon={DoorOpen} label="Rooms" color="bg-teal-600" onClick={() => navigate('/rooms')} />
+              <ActionButton icon={BookOpen} label="Subjects" color="bg-slate-700" onClick={() => navigate('/subjects')} />
+              <ActionButton icon={Users} label="Faculty" color="bg-blue-600" onClick={() => navigate('/faculty')} />
+              <ActionButton icon={GitMerge} label="Faculty Mapping" color="bg-indigo-700" onClick={() => navigate('/mapping')} />
               <ActionButton
                 icon={Upload}
                 label={bulkImporting ? 'Fetching CSVs...' : 'Full Data Fetch'}
@@ -197,11 +220,13 @@ export default function Dashboard() {
                 disabled={bulkImporting}
               />
               <ActionButton icon={Download} label="Download Templates" color="bg-purple-600" onClick={() => { window.location.href = '/api/imports/templates'; }} />
-              <ActionButton icon={FileText} label="Extract & Fill Data" color="bg-violet-600" onClick={() => setDocumentExtractorOpen(true)} />
-              <ActionButton icon={Plus} label="Generate New" color="bg-slate-600" onClick={() => navigate('/generate')} />
+              <ActionButton icon={SettingsIcon} label="Settings" color="bg-slate-600" onClick={() => navigate('/settings')} />
             </>
           ) : (
-            <ActionButton icon={Calendar} label="View All Timetables" color="bg-primary-600" onClick={() => navigate('/view')} />
+            <>
+              <ActionButton icon={Calendar} label="View All Timetables" color="bg-primary-600" onClick={() => navigate('/view')} />
+              <ActionButton icon={SettingsIcon} label="Settings" color="bg-slate-600" onClick={() => navigate('/settings')} />
+            </>
           )}
         </div>
         {admin && bulkImportResults.length > 0 && (
