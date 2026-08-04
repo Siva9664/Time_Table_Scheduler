@@ -30,3 +30,6 @@ venv_short/
 .vscode/
 package.json
 package-lock.json
+.coverage
+uploads/
+backend/uploads/

@@ -9,7 +9,6 @@ from openai import OpenAI
 
 from .document_constraints import ExtractedDocument
 
-
 COURSE_TYPES = {"Theory", "Lab", "Blended", "Project", "Seminar", "Unknown"}
 
 SYSTEM_PROMPT = """You are an advanced, fail-safe Multimodal Data Extraction and Layout Analysis Engine. Your objective is to parse academic timetable, syllabus, faculty allocation, or course documents and convert them into a perfectly normalized, production-ready JSON dataset.
@@ -250,7 +249,9 @@ def analyze_academic_documents(
     }
 
 
-def normalize_extracted_timetable(payload: Any) -> Tuple[List[Dict[str, Any]], List[str]]:
+def normalize_extracted_timetable(
+    payload: Any,
+) -> Tuple[List[Dict[str, Any]], List[str]]:
     warnings: List[str] = []
     rows = _payload_rows(payload)
     normalized: List[Dict[str, Any]] = []
@@ -370,9 +371,13 @@ def _payload_rows(payload: Any) -> List[Any]:
     return []
 
 
-def _normalize_row(row: Dict[str, Any], index: int, inherited: Dict[str, Any]) -> Tuple[Dict[str, Any], bool]:
+def _normalize_row(
+    row: Dict[str, Any], index: int, inherited: Dict[str, Any]
+) -> Tuple[Dict[str, Any], bool]:
     meta = _as_dict(row.get("meta"))
-    details = _as_dict(row.get("course_details") or row.get("course") or row.get("subject"))
+    details = _as_dict(
+        row.get("course_details") or row.get("course") or row.get("subject")
+    )
     credits = _as_dict(row.get("credit_structure") or row.get("credits"))
     faculty = _as_dict(row.get("faculty_assignment") or row.get("faculty"))
     extra = _as_dict(row.get("additional_metadata") or row.get("metadata"))
@@ -381,15 +386,27 @@ def _normalize_row(row: Dict[str, Any], index: int, inherited: Dict[str, Any]) -
     row_index = _int_value(meta.get("row_index"), default=index)
 
     subject_code = _clean_nullable(
-        details.get("subject_code") or details.get("course_code") or row.get("subject_code") or row.get("code")
+        details.get("subject_code")
+        or details.get("course_code")
+        or row.get("subject_code")
+        or row.get("code")
     )
     subject_name = _clean_value(
-        details.get("subject_name") or details.get("course_name") or details.get("name") or row.get("subject_name") or row.get("name")
+        details.get("subject_name")
+        or details.get("course_name")
+        or details.get("name")
+        or row.get("subject_name")
+        or row.get("name")
     )
-    course_type = _normalize_type(details.get("type") or row.get("type") or row.get("course_type"))
+    course_type = _normalize_type(
+        details.get("type") or row.get("type") or row.get("course_type")
+    )
 
     faculty_name = _clean_nullable(
-        faculty.get("full_name") or faculty.get("name") or row.get("faculty") or row.get("faculty_name")
+        faculty.get("full_name")
+        or faculty.get("name")
+        or row.get("faculty")
+        or row.get("faculty_name")
     )
     designation = _clean_nullable(faculty.get("designation") or row.get("designation"))
     faculty_name, inferred_designation = _split_faculty_designation(faculty_name)
@@ -402,10 +419,18 @@ def _normalize_row(row: Dict[str, Any], index: int, inherited: Dict[str, Any]) -
     if not subject_name and inherited.get("subject_name"):
         subject_name = inherited["subject_name"]
         inherited_keys.append("subject_name")
-    elif _is_generic_component_name(subject_name) and inherited.get("subject_name") and _looks_like_split_component(raw_line):
+    elif (
+        _is_generic_component_name(subject_name)
+        and inherited.get("subject_name")
+        and _looks_like_split_component(raw_line)
+    ):
         subject_name = inherited["subject_name"]
         inherited_keys.append("subject_name")
-    if course_type == "Unknown" and inherited.get("type") and _looks_like_split_component(raw_line):
+    if (
+        course_type == "Unknown"
+        and inherited.get("type")
+        and _looks_like_split_component(raw_line)
+    ):
         course_type = inherited["type"]
         inherited_keys.append("type")
     if not faculty_name and inherited.get("faculty_name"):
@@ -415,14 +440,21 @@ def _normalize_row(row: Dict[str, Any], index: int, inherited: Dict[str, Any]) -
         designation = inherited["designation"]
         inherited_keys.append("designation")
 
-    elective_group = _clean_nullable(details.get("elective_group") or row.get("elective_group"))
+    elective_group = _clean_nullable(
+        details.get("elective_group") or row.get("elective_group")
+    )
     if not elective_group:
         elective_group = _extract_elective_group(subject_name)
-    is_elective = _bool_value(details.get("is_elective"), default=bool(elective_group or _contains_elective(subject_name)))
+    is_elective = _bool_value(
+        details.get("is_elective"),
+        default=bool(elective_group or _contains_elective(subject_name)),
+    )
 
     remarks = _clean_nullable(extra.get("remarks") or row.get("remarks"))
     if inherited_keys:
-        remarks = _join_remarks(remarks, f"Inherited merged-cell context: {', '.join(inherited_keys)}.")
+        remarks = _join_remarks(
+            remarks, f"Inherited merged-cell context: {', '.join(inherited_keys)}."
+        )
 
     item = {
         "meta": {
@@ -438,16 +470,28 @@ def _normalize_row(row: Dict[str, Any], index: int, inherited: Dict[str, Any]) -
         },
         "credit_structure": {
             "lecture_hours_L": _int_value(
-                credits.get("lecture_hours_L") or credits.get("L") or row.get("L") or row.get("lecture_hours")
+                credits.get("lecture_hours_L")
+                or credits.get("L")
+                or row.get("L")
+                or row.get("lecture_hours")
             ),
             "tutorial_hours_T": _int_value(
-                credits.get("tutorial_hours_T") or credits.get("T") or row.get("T") or row.get("tutorial_hours")
+                credits.get("tutorial_hours_T")
+                or credits.get("T")
+                or row.get("T")
+                or row.get("tutorial_hours")
             ),
             "practical_hours_P": _int_value(
-                credits.get("practical_hours_P") or credits.get("P") or row.get("P") or row.get("practical_hours")
+                credits.get("practical_hours_P")
+                or credits.get("P")
+                or row.get("P")
+                or row.get("practical_hours")
             ),
             "total_credits_C": _int_value(
-                credits.get("total_credits_C") or credits.get("C") or row.get("C") or row.get("credits")
+                credits.get("total_credits_C")
+                or credits.get("C")
+                or row.get("C")
+                or row.get("credits")
             ),
         },
         "faculty_assignment": {
@@ -506,7 +550,9 @@ def _deterministic_extract(documents: List[ExtractedDocument]) -> List[Dict[str,
     return rows
 
 
-def _row_from_cells(cells: List[str], header_map: Optional[Dict[str, int]], raw_line: str) -> Optional[Dict[str, Any]]:
+def _row_from_cells(
+    cells: List[str], header_map: Optional[Dict[str, int]], raw_line: str
+) -> Optional[Dict[str, Any]]:
     if header_map:
         row = {
             "subject_code": _cell(cells, header_map.get("subject_code")),
@@ -521,7 +567,19 @@ def _row_from_cells(cells: List[str], header_map: Optional[Dict[str, int]], raw_
             "remarks": _cell(cells, header_map.get("remarks")),
             "raw_text_line": raw_line,
         }
-        if any(row.get(key) for key in ("subject_code", "subject_name", "faculty", "L", "T", "P", "C", "remarks")):
+        if any(
+            row.get(key)
+            for key in (
+                "subject_code",
+                "subject_name",
+                "faculty",
+                "L",
+                "T",
+                "P",
+                "C",
+                "remarks",
+            )
+        ):
             return row
         return None
 
@@ -541,7 +599,14 @@ def _row_from_cells(cells: List[str], header_map: Optional[Dict[str, int]], raw_
         row["subject_name"] = cells[0]
         rest_start = 1
 
-    type_index = next((idx for idx in range(rest_start, len(cells)) if _normalize_type(cells[idx]) != "Unknown"), None)
+    type_index = next(
+        (
+            idx
+            for idx in range(rest_start, len(cells))
+            if _normalize_type(cells[idx]) != "Unknown"
+        ),
+        None,
+    )
     if type_index is not None:
         row["type"] = cells[type_index]
 
@@ -550,8 +615,11 @@ def _row_from_cells(cells: List[str], header_map: Optional[Dict[str, int]], raw_
         row[key] = value
 
     faculty_candidates = [
-        cell for idx, cell in enumerate(cells[rest_start:], start=rest_start)
-        if idx not in numeric_positions and idx != type_index and _looks_like_faculty(cell)
+        cell
+        for idx, cell in enumerate(cells[rest_start:], start=rest_start)
+        if idx not in numeric_positions
+        and idx != type_index
+        and _looks_like_faculty(cell)
     ]
     if faculty_candidates:
         row["faculty"] = faculty_candidates[-1]
@@ -565,7 +633,14 @@ def _header_map(cells: List[str]) -> Optional[Dict[str, int]]:
         normalized = _header_token(cell)
         if normalized in {"subjectcode", "coursecode", "subcode", "code"}:
             mapping.setdefault("subject_code", index)
-        elif normalized in {"subjectname", "coursename", "coursetitle", "subject", "title", "name"}:
+        elif normalized in {
+            "subjectname",
+            "coursename",
+            "coursetitle",
+            "subject",
+            "title",
+            "name",
+        }:
             mapping.setdefault("subject_name", index)
         elif normalized in {"type", "component", "category", "mode"}:
             mapping.setdefault("type", index)
@@ -577,7 +652,14 @@ def _header_map(cells: List[str]) -> Optional[Dict[str, int]]:
             mapping["P"] = index
         elif normalized in {"c", "credits", "credit"}:
             mapping["C"] = index
-        elif normalized in {"faculty", "facultyname", "staff", "staffname", "instructor", "teacher"}:
+        elif normalized in {
+            "faculty",
+            "facultyname",
+            "staff",
+            "staffname",
+            "instructor",
+            "teacher",
+        }:
             mapping.setdefault("faculty", index)
         elif normalized in {"designation", "role", "position"}:
             mapping.setdefault("designation", index)
@@ -643,7 +725,15 @@ def _analysis_quality_score(rows: List[Dict[str, Any]]) -> int:
             score += 2
         if details.get("type") and details.get("type") != "Unknown":
             score += 2
-        if any(credits.get(key, 0) for key in ("lecture_hours_L", "tutorial_hours_T", "practical_hours_P", "total_credits_C")):
+        if any(
+            credits.get(key, 0)
+            for key in (
+                "lecture_hours_L",
+                "tutorial_hours_T",
+                "practical_hours_P",
+                "total_credits_C",
+            )
+        ):
             score += 3
         if faculty.get("full_name"):
             score += 2
@@ -681,7 +771,15 @@ def _clean_value(value: Any) -> str:
 
 def _clean_nullable(value: Any) -> Optional[str]:
     cleaned = _clean_value(value)
-    if not cleaned or cleaned.lower() in {"null", "none", "nil", "na", "n/a", "-", "--"}:
+    if not cleaned or cleaned.lower() in {
+        "null",
+        "none",
+        "nil",
+        "na",
+        "n/a",
+        "-",
+        "--",
+    }:
         return None
     return cleaned
 
@@ -735,11 +833,15 @@ def _extract_elective_group(text: Any) -> Optional[str]:
     parenthetical = re.search(r"\(([^)]*elective[^)]*)\)", cleaned, flags=re.IGNORECASE)
     if parenthetical:
         return _clean_value(parenthetical.group(1))
-    inline = re.search(r"((?:professional\s+)?elective\s+[ivxlcdm0-9]+)", cleaned, flags=re.IGNORECASE)
+    inline = re.search(
+        r"((?:professional\s+)?elective\s+[ivxlcdm0-9]+)", cleaned, flags=re.IGNORECASE
+    )
     return _clean_value(inline.group(1)) if inline else None
 
 
-def _split_faculty_designation(value: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+def _split_faculty_designation(
+    value: Optional[str],
+) -> Tuple[Optional[str], Optional[str]]:
     if not value:
         return None, None
     parts = [part.strip() for part in re.split(r"[,;/]", value, maxsplit=1)]
@@ -784,7 +886,18 @@ def _looks_like_course_code(value: str) -> bool:
 
 def _looks_like_designation(value: str) -> bool:
     text = _clean_value(value).lower()
-    return any(word in text for word in ("prof", "assistant", "associate", "lecturer", "hod", "dean", "trainer"))
+    return any(
+        word in text
+        for word in (
+            "prof",
+            "assistant",
+            "associate",
+            "lecturer",
+            "hod",
+            "dean",
+            "trainer",
+        )
+    )
 
 
 def _looks_like_faculty(value: str) -> bool:
@@ -799,7 +912,10 @@ def _looks_like_faculty(value: str) -> bool:
 
 def _looks_like_split_component(raw_line: str) -> bool:
     lower = _clean_value(raw_line).lower()
-    return any(word in lower for word in ("lab", "practical", "tutorial", "blended", "track", "batch"))
+    return any(
+        word in lower
+        for word in ("lab", "practical", "tutorial", "blended", "track", "batch")
+    )
 
 
 def _looks_like_footnote(line: str) -> bool:
@@ -809,7 +925,15 @@ def _looks_like_footnote(line: str) -> bool:
 
 def _is_generic_component_name(value: Any) -> bool:
     normalized = _header_token(_clean_value(value))
-    return normalized in {"lab", "practical", "laboratory", "tutorial", "theory", "blended", "component"}
+    return normalized in {
+        "lab",
+        "practical",
+        "laboratory",
+        "tutorial",
+        "theory",
+        "blended",
+        "component",
+    }
 
 
 def _is_header_like_item(item: Dict[str, Any]) -> bool:
@@ -821,5 +945,8 @@ def _is_header_like_item(item: Dict[str, Any]) -> bool:
     return (
         "subjectcode" in header_blob
         and ("subjectname" in header_blob or "coursename" in header_blob)
-        and any(token in header_blob for token in ("faculty", "designation", "credits", "ltpc"))
+        and any(
+            token in header_blob
+            for token in ("faculty", "designation", "credits", "ltpc")
+        )
     )
