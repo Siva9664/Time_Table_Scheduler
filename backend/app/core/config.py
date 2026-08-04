@@ -18,7 +18,7 @@ class Settings(BaseSettings):
         "http://localhost:3002,http://localhost:3000,http://localhost:3003,http://localhost:5173"
     )
     SOLVER_TIME_LIMIT_SECONDS: int = 60
-    AI_MODEL: str = "grok-1"
+    AI_MODEL: str = "qwen-plus"
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_API_BASE: str = "https://api.openai.com/v1"
     OPENAI_TIMEOUT_SECONDS: int = 60
@@ -26,10 +26,11 @@ class Settings(BaseSettings):
     DOCUMENT_UPLOAD_MAX_FILE_BYTES: int = 15 * 1024 * 1024
     DOCUMENT_TEXT_MAX_CHARS: int = 200_000
     DOCUMENT_OCR_MAX_PAGES: int = 6
-    DOCUMENT_ANALYSIS_MODEL: Optional[str] = "qwen2.5vl"
-    GEMINI_API_KEY: Optional[str] = None
-    DOCUMENT_ANALYSIS_API_BASE: str = "http://localhost:11434/v1"
-    DOCUMENT_ANALYSIS_API_KEY: Optional[str] = "local"
+    DOCUMENT_ANALYSIS_MODEL: str = "qwen-plus"
+    QWEN_API_KEY: Optional[str] = None
+    DASHSCOPE_API_KEY: Optional[str] = None
+    DOCUMENT_ANALYSIS_API_BASE: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+    DOCUMENT_ANALYSIS_API_KEY: Optional[str] = None
     DOCUMENT_ANALYSIS_TIMEOUT_SECONDS: int = 120
     DOCUMENT_ANALYSIS_MAX_CHARS: int = 60_000
 
@@ -43,33 +44,37 @@ class Settings(BaseSettings):
 
     @property
     def active_ai_api_key(self) -> Optional[str]:
-        if self.GEMINI_API_KEY:
-            return self.GEMINI_API_KEY
-        return self.OPENAI_API_KEY
+        return self.QWEN_API_KEY or self.DASHSCOPE_API_KEY or self.OPENAI_API_KEY
 
     @property
     def active_ai_api_base(self) -> str:
-        if self.GEMINI_API_KEY:
-            return "https://generativelanguage.googleapis.com/v1beta/openai/"
+        if self.QWEN_API_KEY or self.DASHSCOPE_API_KEY:
+            return "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
         return self.OPENAI_API_BASE
 
     @property
     def active_ai_model(self) -> str:
-        if self.GEMINI_API_KEY:
-            if self.AI_MODEL == "grok-1" or "gemini" not in self.AI_MODEL.lower():
-                return "gemini-2.5-flash"
-        return self.AI_MODEL
+        return self.DOCUMENT_ANALYSIS_MODEL or "qwen-plus"
+
+    @property
+    def active_document_analysis_model(self) -> str:
+        if not self.DOCUMENT_ANALYSIS_MODEL or self.DOCUMENT_ANALYSIS_MODEL in ("qwen3:8b", "qwen2.5vl", "local"):
+            return "qwen-plus"
+        return self.DOCUMENT_ANALYSIS_MODEL
 
     @property
     def active_document_analysis_api_key(self) -> Optional[str]:
-        if self.DOCUMENT_ANALYSIS_MODEL and "gemini" in self.DOCUMENT_ANALYSIS_MODEL.lower() and self.GEMINI_API_KEY:
-            return self.GEMINI_API_KEY
-        return self.DOCUMENT_ANALYSIS_API_KEY
+        key = self.QWEN_API_KEY or self.DASHSCOPE_API_KEY
+        if key:
+            return key
+        if self.DOCUMENT_ANALYSIS_API_KEY and self.DOCUMENT_ANALYSIS_API_KEY != "local":
+            return self.DOCUMENT_ANALYSIS_API_KEY
+        return None
 
     @property
     def active_document_analysis_api_base(self) -> str:
-        if self.DOCUMENT_ANALYSIS_MODEL and "gemini" in self.DOCUMENT_ANALYSIS_MODEL.lower() and self.GEMINI_API_KEY:
-            return "https://generativelanguage.googleapis.com/v1beta/openai/"
+        if not self.DOCUMENT_ANALYSIS_API_BASE or "localhost:11434" in self.DOCUMENT_ANALYSIS_API_BASE or "127.0.0.1:11434" in self.DOCUMENT_ANALYSIS_API_BASE:
+            return "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
         return self.DOCUMENT_ANALYSIS_API_BASE
 
     class Config:

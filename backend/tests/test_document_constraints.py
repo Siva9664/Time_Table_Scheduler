@@ -304,7 +304,7 @@ class DocumentConstraintTests(unittest.TestCase):
             }
         )
         try:
-            result = analyze_academic_documents([document], model="qwen3:8b")
+            result = analyze_academic_documents([document], model="qwen-plus", api_key="sk-test")
         finally:
             document_analysis._call_local_model = original_call
 
@@ -381,6 +381,23 @@ class ConstraintUploadEndpointTests(unittest.TestCase):
         self.assertIn("extracted_timetable", payload)
         self.assertIn("document_analysis", payload)
         self.assertEqual(payload["files"][0]["extractor"], "text")
+
+    def test_qwen_api_settings_resolution(self):
+        orig_qwen_key = settings.QWEN_API_KEY
+        orig_model = settings.DOCUMENT_ANALYSIS_MODEL
+        orig_base = settings.DOCUMENT_ANALYSIS_API_BASE
+        try:
+            settings.QWEN_API_KEY = "sk-qwen-test-key"
+            settings.DOCUMENT_ANALYSIS_MODEL = "qwen-plus"
+            settings.DOCUMENT_ANALYSIS_API_BASE = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+
+            self.assertEqual(settings.active_document_analysis_model, "qwen-plus")
+            self.assertEqual(settings.active_document_analysis_api_key, "sk-qwen-test-key")
+            self.assertEqual(settings.active_document_analysis_api_base, "https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
+        finally:
+            settings.QWEN_API_KEY = orig_qwen_key
+            settings.DOCUMENT_ANALYSIS_MODEL = orig_model
+            settings.DOCUMENT_ANALYSIS_API_BASE = orig_base
 
 
 if __name__ == "__main__":
