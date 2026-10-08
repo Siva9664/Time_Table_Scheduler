@@ -4,11 +4,13 @@ os.environ["SECRET_KEY"] = "test_secret"
 os.environ["ALGORITHM"] = "HS256"
 
 import sys
-from unittest.mock import MagicMock
-sys.modules['pymongo'] = MagicMock()
-sys.modules['pymongo.collection'] = MagicMock()
-sys.modules['pymongo.database'] = MagicMock()
-sys.modules['pymongo.mongo_client'] = MagicMock()
+import mongomock
+import app.database.database as db_module
+
+# Ensure test client uses mongomock for safe, fast in-memory execution
+if not db_module._connection_ready:
+    db_module._client = mongomock.MongoClient()
+    db_module._connection_ready = True
 """
 test_knowledge_ingestion.py — Phase 19: Tests for the Knowledge Ingestion Module
 

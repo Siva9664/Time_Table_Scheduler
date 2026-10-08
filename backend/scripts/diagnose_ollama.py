@@ -21,8 +21,8 @@ def test_ollama():
         print(f"ERROR: Failed to list models: {e}")
         return
 
-    # Check for qwen2.5-vl or qwen2.5vl
-    target_models = ["qwen2.5-vl:latest", "qwen2.5-vl", "qwen2.5vl:latest", "qwen2.5vl"]
+    # Check for qwen3:1.7b
+    target_models = ["qwen3:1.7b:latest", "qwen3:1.7b", "qwen3"]
     found_model = None
     for m in models:
         if any(target in m for target in target_models):
@@ -30,8 +30,8 @@ def test_ollama():
             break
 
     if not found_model:
-        print(f"\nWARNING: No Qwen 2.5 VL model tag found in your Ollama tags. You have: {models}")
-        print("Please pull the model first using: ollama pull qwen2.5-vl")
+        print(f"\nWARNING: No Qwen 3:1.7B model found in your Ollama tags. You have: {models}")
+        print("Please pull the model first using: ollama pull qwen3:1.7b")
         return
     else:
         print(f"\nFound Qwen model: {found_model}")

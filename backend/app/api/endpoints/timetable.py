@@ -513,6 +513,9 @@ def map_subject_to_class(
     return _enrich_subject(db["subjects"].find_one({"_id": result.inserted_id}), db)
 
 
+map_subject_to_faculty = map_subject_to_class
+
+
 @router.delete("/subjects/{id}")
 def delete_subject(
     id: str,

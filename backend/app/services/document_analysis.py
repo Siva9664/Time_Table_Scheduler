@@ -190,8 +190,8 @@ def merge_duplicate_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def analyze_academic_documents(
     documents: Iterable[ExtractedDocument],
     *,
-    model: Optional[str] = "qwen-plus",
-    api_base: str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    model: Optional[str] = "qwen3:1.7b",
+    api_base: str = "http://localhost:11434/v1",
     api_key: Optional[str] = None,
     timeout_seconds: int = 120,
     max_chars: int = 60_000,
@@ -294,10 +294,11 @@ def _call_local_model(
     timeout_seconds: int,
     max_chars: int,
 ) -> str:
-    client = OpenAI(api_key=api_key or "local", base_url=api_base.rstrip("/"), timeout=timeout_seconds)
+    client = OpenAI(api_key=api_key or "ollama", base_url=api_base.rstrip("/"), timeout=timeout_seconds)
     user_prompt = _build_user_prompt(documents, max_chars=max_chars)
+    target_model = model or "qwen3:1.7b"
     kwargs = {
-        "model": model,
+        "model": target_model,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},

@@ -1,4 +1,4 @@
-FROM qwen2.5-vl
+FROM qwen3:1.7b
 
 # We set low temperature for extraction to be precise and deterministic
 PARAMETER temperature 0.0

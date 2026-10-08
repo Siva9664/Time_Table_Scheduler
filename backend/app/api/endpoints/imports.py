@@ -1425,11 +1425,10 @@ async def extract_academic_data(
     Returns a stream of NDJSON progress updates and the final merged structured entities.
     """
     from ...core.config import settings
-    from ...services.document_constraints import extract_document_text
+    from ...services.document_constraints import extract_document_text, extract_pdf_tables_and_text
     import urllib.request
     import json
     import asyncio
-    import base64
     import io
     import threading
     from typing import Optional
@@ -1446,107 +1445,84 @@ async def extract_academic_data(
         main_queue = asyncio.Queue()
         active_tasks = 0
 
-        # Try to extract images for Qwen Vision
         ext = (file.filename or "").lower().split(".")[-1]
-        images_base64 = []
-        if ext in {'png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif', 'tif', 'tiff'}:
-            images_base64.append(base64.b64encode(content).decode('utf-8'))
-        elif ext == 'pdf':
-            try:
-                from pdf2image import convert_from_bytes
-                pages = await asyncio.to_thread(convert_from_bytes, content, first_page=1, last_page=settings.DOCUMENT_OCR_MAX_PAGES)
-                for page in pages:
-                    buffer = io.BytesIO()
-                    page.save(buffer, format="JPEG")
-                    images_base64.append(base64.b64encode(buffer.getvalue()).decode('utf-8'))
-            except Exception as e:
-                await main_queue.put(("data", json.dumps({"status": "log", "text": f"\n[System] PDF to image conversion failed (will fallback to text): {e}\n"}) + "\n"))
-
         doc_text_result = {"text": "", "warnings": [], "extractor": "none"}
         extracted_data_result = {
             "departments": [], "batches": [], "classes": [], "rooms": [],
             "subjects": [], "faculty": [], "mappings": []
         }
         
-        async def ocr_task():
+        async def extraction_task():
             try:
-                await main_queue.put(("data", json.dumps({"status": "progress", "progress": 10, "message": "[PaddleOCR] Running extraction..."}) + "\n"))
-                doc = await asyncio.to_thread(
-                    extract_document_text,
-                    file.filename or "uploaded-file",
-                    content,
-                    file.content_type,
-                    max_chars=settings.DOCUMENT_TEXT_MAX_CHARS,
-                    ocr_max_pages=settings.DOCUMENT_OCR_MAX_PAGES,
-                )
-                doc_text_result["text"] = doc.text
-                doc_text_result["warnings"] = list(doc.warnings)
-                doc_text_result["extractor"] = doc.extractor
-                await main_queue.put(("data", json.dumps({"status": "log", "text": f"\n[PaddleOCR] Extracted {len(doc.text)} characters.\n"}) + "\n"))
+                if ext == 'pdf':
+                    await main_queue.put(("data", json.dumps({"status": "progress", "progress": 15, "message": "[PDF Table Extraction] Extracting timetable grids & layout with pdfplumber..."}) + "\n"))
+                    table_text, table_warnings = await asyncio.to_thread(extract_pdf_tables_and_text, content)
+                    doc_text_result["text"] = table_text
+                    doc_text_result["warnings"] = list(table_warnings)
+                    doc_text_result["extractor"] = "pdf-table-extractor"
+                    await main_queue.put(("data", json.dumps({"status": "log", "text": f"\n[PDF Table Extraction] Extracted {len(table_text)} characters across structured tables.\n"}) + "\n"))
+                else:
+                    await main_queue.put(("data", json.dumps({"status": "progress", "progress": 15, "message": "[Document Parser] Extracting document text..."}) + "\n"))
+                    doc = await asyncio.to_thread(
+                        extract_document_text,
+                        file.filename or "uploaded-file",
+                        content,
+                        file.content_type,
+                        max_chars=settings.DOCUMENT_TEXT_MAX_CHARS,
+                        ocr_max_pages=settings.DOCUMENT_OCR_MAX_PAGES,
+                    )
+                    doc_text_result["text"] = doc.text
+                    doc_text_result["warnings"] = list(doc.warnings)
+                    doc_text_result["extractor"] = doc.extractor
+                    await main_queue.put(("data", json.dumps({"status": "log", "text": f"\n[Document Parser] Extracted {len(doc.text)} characters.\n"}) + "\n"))
             except Exception as e:
-                await main_queue.put(("data", json.dumps({"status": "log", "text": f"\n[PaddleOCR] Failed: {e}\n"}) + "\n"))
+                await main_queue.put(("data", json.dumps({"status": "log", "text": f"\n[Extraction Error] Failed: {e}\n"}) + "\n"))
             finally:
-                # Mark done, in case Qwen is waiting for text
                 if not doc_text_result["text"]:
                     doc_text_result["text"] = " " # unblock qwen
-                await main_queue.put(("task_done", "ocr"))
+                await main_queue.put(("task_done", "extraction"))
 
-        async def qwen_task(images, wait_for_text=False):
+        async def qwen_task():
             try:
-                active_key = qwen_api_key or settings.active_document_analysis_api_key
-                model_name = settings.active_document_analysis_model or "qwen-plus"
-                api_base = settings.active_document_analysis_api_base.rstrip("/")
-                
-                timeout = max(settings.DOCUMENT_ANALYSIS_TIMEOUT_SECONDS, 900)
-                
-                chunks = []
-                is_image = False
-                if images:
-                    chunks = images
-                    is_image = True
-                else:
-                    if wait_for_text:
-                        # Wait for OCR task to finish to get the text
-                        while not doc_text_result["text"]:
-                            await asyncio.sleep(0.5)
-                        chunks = _split_text_into_chunks(doc_text_result["text"], 4000)
-                    else:
-                        chunks = _split_text_into_chunks(doc_text_result["text"], 4000)
+                active_key = qwen_api_key or settings.active_document_analysis_api_key or "ollama"
+                model_name = settings.active_document_analysis_model or "qwen3:1.7b"
+                api_base = (settings.active_document_analysis_api_base or "http://localhost:11434/v1").rstrip("/")
+                timeout = max(settings.DOCUMENT_ANALYSIS_TIMEOUT_SECONDS, 120)
 
-                if not chunks or (not is_image and not chunks[0].strip()):
-                    await main_queue.put(("data", json.dumps({"status": "log", "text": "\n[Qwen] No data to process.\n"}) + "\n"))
+                # Wait for extraction task to finish
+                while not doc_text_result["text"]:
+                    await asyncio.sleep(0.3)
+
+                extracted_text = doc_text_result["text"].strip()
+                if not extracted_text:
+                    await main_queue.put(("data", json.dumps({"status": "log", "text": "\n[Qwen3:1.7B] No timetable data found in document to process.\n"}) + "\n"))
                     return
+
+                chunks = _split_text_into_chunks(extracted_text, 5000)
 
                 for i, chunk in enumerate(chunks):
                     progress_pct = 30 + int(60 * (i / len(chunks)))
-                    await main_queue.put(("data", json.dumps({"status": "progress", "progress": progress_pct, "message": f"[Qwen API] Processing part {i+1}/{len(chunks)}..."}) + "\n"))
+                    await main_queue.put(("data", json.dumps({"status": "progress", "progress": progress_pct, "message": f"[Qwen3:1.7B] Analyzing part {i+1}/{len(chunks)}..."}) + "\n"))
                     
-                    messages = [{"role": "system", "content": ACADEMIC_EXTRACTOR_SYSTEM_PROMPT}]
-                    if is_image:
-                        messages.append({
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": "Extract ONLY the academic entities that are explicitly and literally visible in this document image. Do NOT invent, guess, or hallucinate any values. Any field not clearly present in the image must be set to \"\" or null. Return ONLY a valid JSON object with no extra text."},
-                                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{chunk}"}}
-                            ]
-                        })
-                    else:
-                        messages.append({
+                    messages = [
+                        {"role": "system", "content": ACADEMIC_EXTRACTOR_SYSTEM_PROMPT},
+                        {
                             "role": "user",
                             "content": (
-                                "Extract ONLY the academic entities that are explicitly and literally present in the following document text. "
+                                "Extract ONLY the academic entities that are explicitly and literally present in the following timetable table and text. "
                                 "Do NOT invent, guess, infer, or hallucinate any values. "
                                 "If a field (email, code, section, department, batch, room, etc.) is not clearly stated in the text, set it to \"\" or null. "
-                                "Return ONLY a valid JSON object with no extra text.\n\n"
+                                "Return ONLY a valid JSON object matching the required schema with no extra commentary.\n\n"
                                 f"{chunk}"
                             )
-                        })
+                        }
+                    ]
 
                     payload = {
                         "model": model_name,
                         "stream": True,
                         "temperature": 0.0,
-                        "max_tokens": 8192,
+                        "max_tokens": 4096,
                         "response_format": {"type": "json_object"},
                         "messages": messages
                     }
@@ -1606,13 +1582,14 @@ async def extract_academic_data(
                                     await main_queue.put(("data", json.dumps({"status": "log", "text": token}) + "\n"))
                             except Exception:
                                 pass
-                                
+
                     content_str = content_str.strip()
                     import re as _re
                     content_str = _re.sub(r'<think>.*?</think>', '', content_str, flags=_re.DOTALL).strip()
                     content_str = _re.sub(r'^```(?:json)?\s*', '', content_str).strip()
                     content_str = _re.sub(r'\s*```$', '', content_str).strip()
 
+                    parsed = None
                     try:
                         parsed = json.loads(content_str)
                     except json.JSONDecodeError:
@@ -1623,43 +1600,40 @@ async def extract_academic_data(
                                 parsed = json.loads(content_str[json_start:json_end + 1])
                             except json.JSONDecodeError as inner_e:
                                 doc_text_result["warnings"].append(
-                                    f"Chunk {i+1}: Qwen model returned invalid JSON ({inner_e}). "
+                                    f"Chunk {i+1}: Qwen3:1.7B returned invalid JSON ({inner_e}). "
                                     "Try again or check file input."
                                 )
                                 continue
                         else:
-                            doc_text_result["warnings"].append(f"Chunk {i+1}: Could not parse JSON from Qwen response.")
+                            doc_text_result["warnings"].append(f"Chunk {i+1}: Could not parse JSON from Qwen3:1.7B response.")
                             continue
 
-                    for key in extracted_data_result.keys():
-                        if key in parsed and isinstance(parsed[key], list):
-                            extracted_data_result[key].extend(parsed[key])
-                        elif key == "faculty" and "faculties" in parsed and isinstance(parsed["faculties"], list):
-                            extracted_data_result["faculty"].extend(parsed["faculties"])
+                    if parsed:
+                        for key in extracted_data_result.keys():
+                            if key in parsed and isinstance(parsed[key], list):
+                                extracted_data_result[key].extend(parsed[key])
+                            elif key == "faculty" and "faculties" in parsed and isinstance(parsed["faculties"], list):
+                                extracted_data_result["faculty"].extend(parsed["faculties"])
                             
             except urllib.error.HTTPError as http_err:
                 error_body = http_err.read().decode("utf-8", errors="replace") if hasattr(http_err, 'read') else str(http_err)
-                await main_queue.put(("data", json.dumps({"status": "error", "error": f"[Qwen API] HTTP {http_err.code}: {error_body[:500]}"}) + "\n"))
+                await main_queue.put(("data", json.dumps({"status": "error", "error": f"[Qwen3:1.7B] HTTP {http_err.code}: {error_body[:400]}"}) + "\n"))
             except urllib.error.URLError as url_err:
-                await main_queue.put(("data", json.dumps({"status": "error", "error": f"[Qwen API] Cannot connect to Qwen API ({api_base}). Reason: {url_err.reason}"}) + "\n"))
+                await main_queue.put(("data", json.dumps({"status": "error", "error": f"[Qwen3:1.7B] Cannot connect to Ollama ({api_base}). Make sure Ollama is running (`ollama run qwen3:1.7b`). Reason: {url_err.reason}"}) + "\n"))
             except Exception as e:
-                await main_queue.put(("data", json.dumps({"status": "error", "error": f"[Qwen API] Error: {e}"}) + "\n"))
+                await main_queue.put(("data", json.dumps({"status": "error", "error": f"[Qwen3:1.7B] Error: {e}"}) + "\n"))
             finally:
                 await main_queue.put(("task_done", "qwen"))
 
         try:
             await main_queue.put(("data", json.dumps({"status": "progress", "progress": 5, "message": f"Processing file: {file.filename} ({len(content)} bytes)"}) + "\n"))
             
-            # Start Tasks
-            asyncio.create_task(ocr_task())
+            # Start Extraction and Qwen Tasks
+            asyncio.create_task(extraction_task())
             active_tasks += 1
             
-            if images_base64:
-                asyncio.create_task(qwen_task(images_base64, wait_for_text=False))
-                active_tasks += 1
-            else:
-                asyncio.create_task(qwen_task([], wait_for_text=True))
-                active_tasks += 1
+            asyncio.create_task(qwen_task())
+            active_tasks += 1
                 
             import sys
             # Consume from main_queue

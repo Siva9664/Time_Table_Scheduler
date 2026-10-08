@@ -388,12 +388,12 @@ class ConstraintUploadEndpointTests(unittest.TestCase):
         orig_base = settings.DOCUMENT_ANALYSIS_API_BASE
         try:
             settings.QWEN_API_KEY = "sk-qwen-test-key"
-            settings.DOCUMENT_ANALYSIS_MODEL = "qwen-plus"
-            settings.DOCUMENT_ANALYSIS_API_BASE = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+            settings.DOCUMENT_ANALYSIS_MODEL = "qwen3:1.7b"
+            settings.DOCUMENT_ANALYSIS_API_BASE = "http://localhost:11434/v1"
 
-            self.assertEqual(settings.active_document_analysis_model, "qwen-plus")
+            self.assertEqual(settings.active_document_analysis_model, "qwen3:1.7b")
             self.assertEqual(settings.active_document_analysis_api_key, "sk-qwen-test-key")
-            self.assertEqual(settings.active_document_analysis_api_base, "https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
+            self.assertEqual(settings.active_document_analysis_api_base, "http://localhost:11434/v1")
         finally:
             settings.QWEN_API_KEY = orig_qwen_key
             settings.DOCUMENT_ANALYSIS_MODEL = orig_model

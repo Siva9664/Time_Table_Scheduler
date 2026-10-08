@@ -420,7 +420,7 @@ export default function DocumentExtractorModal({ isOpen, onClose, onImportSucces
             </div>
             <div>
               <h2 className="text-xl font-black text-slate-800 tracking-tight">AI Document Extractor & Template Filler</h2>
-              <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider">Powered by PaddleOCR & Qwen Cloud API</p>
+              <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider">Powered by PDF Table Extractor & Qwen 3:1.7B</p>
             </div>
           </div>
           <button
@@ -568,7 +568,7 @@ export default function DocumentExtractorModal({ isOpen, onClose, onImportSucces
                       <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
                       Live AI Logs
                     </span>
-                    <span>Qwen API</span>
+                    <span>Qwen 3:1.7B (Local Ollama)</span>
                   </div>
                   <div className="p-4 text-emerald-400 font-mono text-xs overflow-y-auto h-full text-left whitespace-pre-wrap flex-1 custom-scrollbar">
                     {modelLogs || 'Waiting for AI response stream...'}

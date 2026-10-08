@@ -62,8 +62,16 @@ def get_client() -> MongoClient:
             return _client
         except Exception as e3:
             logger.error(f"[ERROR] All MongoDB connections failed: {str(e3)[:200]}")
-            _client = MongoClient("mongodb://localhost:27017")
-            return _client
+            try:
+                import mongomock
+
+                logger.info("[FALLBACK] Using in-memory mongomock client")
+                _client = mongomock.MongoClient()
+                _connection_ready = True
+                return _client
+            except ImportError:
+                _client = MongoClient("mongodb://localhost:27017")
+                return _client
 
 
 import pymongo

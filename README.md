@@ -90,26 +90,60 @@ npm run dev
 
 ---
 
-## 🧪 Testing & Validation
+---
 
-This project enforces strict quality control.
+## 🔄 CI/CD Pipeline & DevOps Automation
+
+This project includes fully automated **GitHub Actions CI/CD workflows** and Docker orchestration:
+
+- **CI Pipeline (`.github/workflows/ci.yml`)**:
+  - Automatically triggers on `push` and `pull_request` to `main` and `develop`.
+  - Spins up a dedicated **MongoDB 7.0 Service Container**.
+  - Runs Python static analysis (`flake8`) and full Pytest suite with code coverage (`pytest-cov`).
+  - Installs, lints, and builds the frontend production bundle (`Vite`).
+  - Validates container builds for both backend and frontend Docker images.
+- **CD Pipeline (`.github/workflows/cd.yml`)**:
+  - Automatically triggers on `push` to `main`, git tags (`v*.*.*`), or manual dispatch.
+  - Packages production distribution tarballs and uploads build artifacts.
+  - Builds and publishes multi-platform container images to **GitHub Container Registry (GHCR)**.
+  - Deploys frontend / serverless targets to **Vercel**.
+- **Container Orchestration (`docker-compose.yml`)**:
+  - 1-command local deployment: `docker-compose up --build -d`.
+
+---
+
+## 🧪 Testing & Quality Assurance
+
+Every purpose and component in the main application has an isolated, purpose-built test file in `backend/tests/`:
+
+| Test File | Component in `app/` | Purpose Covered |
+| :--- | :--- | :--- |
+| `test_main_app.py` | `app/main.py` | Lifespan events, root/health endpoints, security headers (CSP, HSTS), rate limiting, Mongo URL masking. |
+| `test_auth.py` | `app/api/endpoints/auth.py`, `app/core/security.py` | Bcrypt hashing, JWT issuance/validation, user registration, login, `/me`, faculty CRUD, tenant isolation. |
+| `test_config.py` | `app/core/config.py`, `app/core/logging_config.py` | Settings parsing, allowed origins list, local/Atlas Mongo toggle, AI keys priority, Loguru logger setup. |
+| `test_database.py` | `app/database/database.py` | MongoDB client pooling, unique index creation across 7 collections, tenant collection schema materialization. |
+| `test_models_and_schemas.py` | `app/models/`, `app/schemas/` | Pydantic validation (Batch, Class, Dept, Faculty, Room, Subject, Timetable, User) and DB document helpers. |
+| `test_timetable_api.py` | `app/api/endpoints/timetable.py` | Academic entities CRUD (Batches, Depts, Rooms, Classes, Subjects, Faculty), subject mappings, AI context builder. |
+| `test_scheduler_engine.py` | `app/services/scheduler.py` | OR-Tools CP-SAT solver, credit hours to contact periods conversion, `_Obj` wrapper, conflict prevention modeling. |
+| `test_ai_parser.py` | `app/services/ai_parser.py` | NLP constraint parser, 10 supported types, weekday/number normalization, fuzzy entity matching, rule fallbacks. |
+| `test_csv_imports.py` | `app/api/endpoints/imports.py` | CSV/Excel batch imports, header column guessing and mapping, deduplication logic. |
+| `test_document_constraints.py` | `app/services/document_constraints.py` | Document text extraction (PDF/DOCX/CSV), slot constraint translation, and normalization. |
+| `test_knowledge_ingestion.py` | `app/services/ingestion/` | Multi-format ingestion, ZIP safety & traversal defense, MIME verification, fuzzy deduplicator, learning engine. |
 
 ### Run Backend Tests (Pytest)
-A dedicated shell script runs the entire integration test suite against a live MongoDB test database:
 ```bash
 cd backend
-chmod +x scripts/run_tests.sh
-./scripts/run_tests.sh
+pytest tests/ -v --cov=app --cov-report=term-missing
 ```
 
 ### Run Static Analysis
 Ensure code quality by running formatting and linting:
 ```bash
 cd backend
-source venv/bin/activate
 flake8 app/ tests/ --max-line-length=120 --extend-ignore=E501,E203,E402
 mypy app/
 ```
+
 
 ---
 

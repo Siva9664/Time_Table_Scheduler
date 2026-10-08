@@ -22,6 +22,14 @@ from ...schemas.user import Token, UserResponse
 router = APIRouter(redirect_slashes=False)
 limiter = Limiter(key_func=get_remote_address)
 
+import types
+import bcrypt
+
+if not hasattr(bcrypt, "__about__"):
+    bcrypt.__about__ = types.SimpleNamespace(
+        __version__=getattr(bcrypt, "__version__", "4.3.0")
+    )
+
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
@@ -124,20 +132,20 @@ def register_user(request: RegisterRequest, db: Database = Depends(get_db)):
 @router.post("/login", response_model=Token)
 @limiter.limit("5/minute")
 def login_user(
-    http_request: Request,
+    request: Request,
     username: Optional[str] = Form(None),
     password: Optional[str] = Form(None),
-    request: Optional[LoginRequest] = None,
+    login_data: Optional[LoginRequest] = None,
     db: Database = Depends(get_db),
 ):
     login_username = username
     login_password = password
 
-    if request:
+    if login_data:
         if not login_username:
-            login_username = request.username
+            login_username = login_data.username
         if not login_password:
-            login_password = request.password
+            login_password = login_data.password
 
     if not login_username or not login_password:
         raise HTTPException(

@@ -180,11 +180,79 @@ def _extract_text_like(content: bytes, ext: str) -> str:
     return text
 
 
+def extract_pdf_tables_and_text(content: bytes) -> Tuple[str, List[str]]:
+    """Extract structured timetable tables and text from PDF using pdfplumber and PyMuPDF."""
+    warnings: List[str] = []
+    page_sections: List[str] = []
+
+    try:
+        import pdfplumber
+
+        with pdfplumber.open(io.BytesIO(content)) as pdf:
+            for page_idx, page in enumerate(pdf.pages, start=1):
+                page_parts: List[str] = []
+                tables = page.extract_tables() or []
+                table_texts: List[str] = []
+                for t_idx, table in enumerate(tables, start=1):
+                    if not table:
+                        continue
+                    cleaned_rows = []
+                    for row in table:
+                        row_vals = [str(c or "").strip().replace("\n", " ") for c in row]
+                        if any(row_vals):
+                            cleaned_rows.append(row_vals)
+                    if cleaned_rows:
+                        headers = cleaned_rows[0]
+                        md_lines = [
+                            "| " + " | ".join(headers) + " |",
+                            "| " + " | ".join(["---"] * len(headers)) + " |",
+                        ]
+                        for r in cleaned_rows[1:]:
+                            padded = (r + [""] * len(headers))[: len(headers)]
+                            md_lines.append("| " + " | ".join(padded) + " |")
+                        table_texts.append(f"--- Table {t_idx} (Page {page_idx}) ---\n" + "\n".join(md_lines))
+
+                raw_text = page.extract_text() or ""
+                if table_texts:
+                    page_parts.extend(table_texts)
+                    if raw_text.strip():
+                        page_parts.append(f"[Page {page_idx} Text]:\n" + raw_text.strip())
+                elif raw_text.strip():
+                    page_parts.append(f"--- Page {page_idx} Text ---\n" + raw_text.strip())
+
+                if page_parts:
+                    page_sections.append("\n\n".join(page_parts))
+    except Exception as exc:
+        warnings.append(f"pdfplumber table extraction failed: {exc}")
+
+    if not page_sections:
+        try:
+            import fitz
+
+            doc = fitz.open(stream=content, filetype="pdf")
+            for page_idx, page in enumerate(doc, start=1):
+                txt = page.get_text("text")
+                if txt.strip():
+                    page_sections.append(f"--- Page {page_idx} Text ---\n{txt.strip()}")
+            doc.close()
+        except Exception as fitz_exc:
+            warnings.append(f"PyMuPDF fallback failed: {fitz_exc}")
+
+    return "\n\n".join(page_sections), warnings
+
+
 def _extract_pdf_text(content: bytes, ocr_max_pages: int) -> Tuple[str, List[str], str]:
     warnings: List[str] = []
     extractor = "pdf"
     text = ""
 
+    # 1. Prefer structured table extraction using pdfplumber
+    table_text, table_warnings = extract_pdf_tables_and_text(content)
+    warnings.extend(table_warnings)
+    if table_text.strip():
+        return table_text, warnings, "pdf-table-extractor"
+
+    # 2. Standard text fallback using pypdf
     for module_name in ("pypdf", "PyPDF2"):
         try:
             module = __import__(module_name)
@@ -333,37 +401,6 @@ def _extract_zip_text(
 
 def _extract_image_ocr(content: bytes) -> Tuple[str, List[str]]:
     warnings = []
-    
-    # Try PaddleOCR first
-    try:
-        from paddleocr import PaddleOCR
-        import numpy as np
-        from PIL import Image
-        
-        # Initialize PaddleOCR (cached as an attribute on the function to avoid reloading every time)
-        if not hasattr(_extract_image_ocr, "_paddle_ocr"):
-            # Set show_log=False to avoid cluttering the console
-            _extract_image_ocr._paddle_ocr = PaddleOCR(use_angle_cls=True, lang='en', show_log=False)
-            
-        image = Image.open(io.BytesIO(content)).convert('RGB')
-        img_np = np.array(image)
-        
-        ocr_result = _extract_image_ocr._paddle_ocr.ocr(img_np, cls=True)
-        text_lines = []
-        if ocr_result:
-            for line in ocr_result:
-                if line:
-                    for word_info in line:
-                        text_lines.append(word_info[1][0])
-                        
-        extracted_text = "\n".join(text_lines)
-        if extracted_text.strip():
-            return extracted_text, []
-            
-    except Exception as paddle_exc:
-        warnings.append(f"PaddleOCR failed: {paddle_exc}. Falling back to Tesseract.")
-        
-    # Fallback to Tesseract
     try:
         import pytesseract
         from PIL import Image
@@ -377,50 +414,22 @@ def _extract_image_ocr(content: bytes) -> Tuple[str, List[str]]:
 
 def _extract_pdf_ocr(content: bytes, max_pages: int) -> Tuple[str, List[str]]:
     warnings = []
-    
-    # Try converting pages
     try:
         from pdf2image import convert_from_bytes
         pages = convert_from_bytes(content, first_page=1, last_page=max(1, max_pages))
     except Exception as exc:
         return "", [f"Local PDF OCR page conversion failed: {exc}"]
-        
-    # Process pages using PaddleOCR or Tesseract
+
     texts = []
-    for page in pages:
-        page_text = ""
-        # Try PaddleOCR
-        try:
-            from paddleocr import PaddleOCR
-            import numpy as np
-            
-            if not hasattr(_extract_pdf_ocr, "_paddle_ocr"):
-                _extract_pdf_ocr._paddle_ocr = PaddleOCR(use_angle_cls=True, lang='en', show_log=False)
-                
-            img_np = np.array(page.convert('RGB'))
-            ocr_result = _extract_pdf_ocr._paddle_ocr.ocr(img_np, cls=True)
-            text_lines = []
-            if ocr_result:
-                for line in ocr_result:
-                    if line:
-                        for word_info in line:
-                            text_lines.append(word_info[1][0])
-            page_text = "\n".join(text_lines)
-        except Exception as paddle_exc:
-            if f"PaddleOCR page extraction failed" not in "".join(warnings):
-                warnings.append(f"PaddleOCR page extraction failed: {paddle_exc}. Falling back to Tesseract.")
-                
-        # Tesseract fallback for this page if PaddleOCR failed or was unavailable
-        if not page_text.strip():
-            try:
-                import pytesseract
-                page_text = pytesseract.image_to_string(page)
-            except Exception as tess_exc:
-                warnings.append(f"Tesseract OCR failed on page: {tess_exc}")
-                
-        if page_text.strip():
-            texts.append(page_text)
-            
+    try:
+        import pytesseract
+        for page in pages:
+            txt = pytesseract.image_to_string(page)
+            if txt.strip():
+                texts.append(txt)
+    except Exception as exc:
+        warnings.append(f"Tesseract OCR failed: {exc}")
+
     return "\n\n".join(texts), warnings
 
 
