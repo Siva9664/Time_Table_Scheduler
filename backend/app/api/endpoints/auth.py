@@ -138,8 +138,8 @@ def login_user(
     login_data: Optional[LoginRequest] = None,
     db: Database = Depends(get_db),
 ):
-    login_username = username
-    login_password = password
+    login_username = username if isinstance(username, str) else None
+    login_password = password if isinstance(password, str) else None
 
     if login_data:
         if not login_username:

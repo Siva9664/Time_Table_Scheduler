@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+import os
 
 import pytest
 
@@ -27,18 +28,22 @@ class TestConfigSettings:
         assert origins == ["http://localhost:3000", "http://example.com", "https://scheduler.app"]
 
     def test_active_mongodb_url_toggle(self):
+        test_mongodb_url = "mongodb://testuser:testpassword@localhost:27017/testdb"
+
         atlas_settings = Settings(
             USE_LOCAL_MONGODB=False,
-            MONGODB_URL="mongodb+srv://atlas_user:pass@cluster.mongodb.net",
-            LOCAL_MONGODB_URL="mongodb://localhost:27017",
+            MONGODB_URL=test_mongodb_url,
+            LOCAL_MONGODB_URL="mongodb://127.0.0.1:27017",
         )
-        assert atlas_settings.active_mongodb_url == "mongodb+srv://atlas_user:pass@cluster.mongodb.net"
+
+        assert atlas_settings.active_mongodb_url == test_mongodb_url
 
         local_settings = Settings(
             USE_LOCAL_MONGODB=True,
-            MONGODB_URL="mongodb+srv://atlas_user:pass@cluster.mongodb.net",
+            MONGODB_URL=test_mongodb_url,
             LOCAL_MONGODB_URL="mongodb://127.0.0.1:27017",
         )
+
         assert local_settings.active_mongodb_url == "mongodb://127.0.0.1:27017"
 
     def test_active_ai_api_key_priority(self):

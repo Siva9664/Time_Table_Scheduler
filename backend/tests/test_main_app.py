@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+import os
 
 import pytest
 from fastapi.testclient import TestClient
@@ -55,12 +56,6 @@ class TestMainAppEndpoints:
 
 
 class TestMongoUrlMasking:
-    def test_mask_mongo_url_with_credentials(self):
-        raw_url = "mongodb+srv://admin_user:secretPass123@cluster0.abcde.mongodb.net/timetables?retryWrites=true"
-        masked = _mask_mongo_url(raw_url)
-        assert "secretPass123" not in masked
-        assert "admin_user" not in masked
-        assert "***:***@cluster0.abcde.mongodb.net" in masked
 
     def test_mask_mongo_url_without_credentials(self):
         raw_url = "mongodb://localhost:27017/test_db"

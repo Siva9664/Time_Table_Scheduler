@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     USE_LOCAL_MONGODB: bool = False
     LOCAL_MONGODB_URL: str = "mongodb://localhost:27017"
     DB_NAME: str = "timetable_db"
-    SECRET_KEY: str = "supersecretkey123"
+    SECRET_KEY: str = "supersecretkey123-academic-scheduler-32bytes"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 4320  # 3 days
     ALLOWED_ORIGINS: str = (

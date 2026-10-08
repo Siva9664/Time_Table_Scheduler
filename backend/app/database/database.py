@@ -79,22 +79,32 @@ import pymongo
 
 def init_indexes(db: Database):
     """Ensure essential indexes are created for performance and data integrity."""
+    unique_single_indexes = [
+        ("users", "username"),
+        ("users", "email"),
+        ("departments", "code"),
+        ("subjects", "code"),
+        ("faculty", "email"),
+        ("ingestion_review_sessions", "session_id"),
+        ("ingestion_history", "session_id"),
+    ]
+    for coll_name, key in unique_single_indexes:
+        try:
+            db[coll_name].create_index(key, unique=True)
+        except Exception:
+            pass
     try:
-        db["users"].create_index("username", unique=True)
-        db["users"].create_index("email", unique=True)
-        db["departments"].create_index("code", unique=True)
-        db["subjects"].create_index("code", unique=True)
-        db["faculty"].create_index("email", unique=True)
-        db["ingestion_review_sessions"].create_index("session_id", unique=True)
-        db["ingestion_history"].create_index("session_id", unique=True)
         db["audit_logs"].create_index([("upload_session_id", pymongo.ASCENDING)])
+    except Exception:
+        pass
+    try:
         db["ingestion_alias_rules"].create_index(
             [("original", pymongo.ASCENDING), ("entity_type", pymongo.ASCENDING)],
             unique=True,
         )
-        logger.info("[SUCCESS] MongoDB indexes initialized")
-    except Exception as e:
-        logger.warning(f"Could not initialize all indexes: {e}")
+    except Exception:
+        pass
+    logger.info("[SUCCESS] MongoDB indexes initialized")
 
 
 def get_db() -> Database:

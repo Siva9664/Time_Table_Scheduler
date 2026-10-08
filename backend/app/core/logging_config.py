@@ -26,6 +26,17 @@ class InterceptHandler(logging.Handler):
 
 def configure_logging():
     """Configures structured JSON logging via Loguru."""
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+    if hasattr(sys.stderr, "reconfigure"):
+        try:
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
     # Remove all existing standard logging handlers
     logging.root.handlers = [InterceptHandler()]
     logging.root.setLevel(logging.INFO)
