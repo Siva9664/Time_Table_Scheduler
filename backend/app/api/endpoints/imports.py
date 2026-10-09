@@ -1666,6 +1666,7 @@ async def extract_academic_data(
             yield json.dumps({"status": "progress", "progress": 95, "message": "Merging and deduplicating results..."}) + "\n"
             
             # Post-process faculty: generate dummy email if missing
+            import re as _re
             faculty_email_map = {}
             for idx, fac in enumerate(extracted_data_result.get("faculty", []), start=1):
                 fac_name = (fac.get("name") or "").strip()
