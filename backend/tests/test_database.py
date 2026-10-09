@@ -35,7 +35,7 @@ class TestDatabaseIndexInitialization:
         mock_collections["users"].create_index.assert_any_call("email", unique=True)
         mock_collections["departments"].create_index.assert_called_with("code", unique=True)
         mock_collections["subjects"].create_index.assert_called_with("code", unique=True)
-        mock_collections["faculty"].create_index.assert_called_with("email", unique=True)
+        mock_collections["faculty"].create_index.assert_called_with("email", unique=True, sparse=True)
         mock_collections["ingestion_review_sessions"].create_index.assert_called_with("session_id", unique=True)
         mock_collections["ingestion_history"].create_index.assert_called_with("session_id", unique=True)
 

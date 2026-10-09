@@ -90,7 +90,10 @@ def init_indexes(db: Database):
     ]
     for coll_name, key in unique_single_indexes:
         try:
-            db[coll_name].create_index(key, unique=True)
+            if coll_name == "faculty" and key == "email":
+                db[coll_name].create_index(key, unique=True, sparse=True)
+            else:
+                db[coll_name].create_index(key, unique=True)
         except Exception:
             pass
     try:

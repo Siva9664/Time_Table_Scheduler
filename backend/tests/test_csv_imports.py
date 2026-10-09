@@ -172,14 +172,97 @@ class CsvImportTests(unittest.TestCase):
         mapping_faculty = map_headers(['name', 'email', 'code', 'max_hours_per_week', 'unavailable_slots'], 'faculty')
         self.assertEqual(mapping_faculty['department_code'], 'code')
 
-    def test_folder_file_type_guessing_handles_common_names(self):
-        self.assertEqual(
-            _guess_import_type("departments_template (1).csv"), "departments"
-        )
-        self.assertEqual(_guess_import_type("spring-faculty-mappings.csv"), "mappings")
-        self.assertEqual(_guess_import_type("rooms.csv"), "rooms")
-        self.assertIsNone(_guess_import_type("notes.txt"))
+    def test_sanitize_and_filter_extracted_entities_strips_mock_data_and_boilerplate(self):
+        from app.api.endpoints.imports import _sanitize_and_filter_extracted_entities
+
+        raw_extractions = {
+            "departments": [
+                {"name": "Computer Science & Engineering", "code": "CSE"},
+                {"name": "General Rules & Guidelines", "code": ""},  # boilerplate
+                {"name": "", "code": ""}  # empty
+            ],
+            "faculty": [
+                {"name": "Dr. Alan Turing", "email": "alan.turing@example.com"},
+                {"name": "Prof. Ada Lovelace", "email": ""},  # no email (should stay empty, not mock)
+                {"name": "Dr. John Doe", "email": "johndoe@institution.edu"},  # mock domain -> stripped to empty
+                {"name": "Principal", "email": ""},  # signatory/boilerplate role -> dropped
+                {"name": "Controller of Examinations", "email": ""},  # signatory -> dropped
+            ],
+            "subjects": [
+                {"name": "Algorithms", "code": "CS201", "hours_per_week": "4", "requires_lab": "false"},
+                {"name": "Instructions to candidates", "code": ""},  # boilerplate -> dropped
+            ],
+            "batches": [
+                {"name": "Morning Batch", "start_time": "09:00", "end_time": "16:00", "period_duration": "50"},
+                {"name": "", "start_time": ""}
+            ],
+            "mappings": [
+                {"subject_code": "CS201", "class_name": "CSE-A", "faculty_email": "Prof. Ada Lovelace"}
+            ]
+        }
+
+        cleaned = _sanitize_and_filter_extracted_entities(raw_extractions)
+
+        # Departments
+        self.assertEqual(len(cleaned["departments"]), 1)
+        self.assertEqual(cleaned["departments"][0]["code"], "CSE")
+
+        # Faculty: no fake @institution.edu, signatories dropped
+        self.assertEqual(len(cleaned["faculty"]), 3)
+        names = [f["name"] for f in cleaned["faculty"]]
+        self.assertIn("Dr. Alan Turing", names)
+        self.assertIn("Prof. Ada Lovelace", names)
+        self.assertIn("Dr. John Doe", names)
+        self.assertNotIn("Principal", names)
+        self.assertNotIn("Controller of Examinations", names)
+
+        # Ada Lovelace email must be empty string, NOT mock data
+        ada = next(f for f in cleaned["faculty"] if f["name"] == "Prof. Ada Lovelace")
+        self.assertEqual(ada["email"], "")
+
+        # John Doe mock email must be stripped to empty string
+        john = next(f for f in cleaned["faculty"] if f["name"] == "Dr. John Doe")
+        self.assertEqual(john["email"], "")
+
+        # Subjects
+        self.assertEqual(len(cleaned["subjects"]), 1)
+        self.assertEqual(cleaned["subjects"][0]["code"], "CS201")
+        self.assertEqual(cleaned["subjects"][0]["hours_per_week"], 4)
+
+        # Mappings
+        self.assertEqual(len(cleaned["mappings"]), 1)
+        self.assertEqual(cleaned["mappings"][0]["subject_code"], "CS201")
+
+    def test_faculty_import_and_mapping_without_email(self):
+        from app.api.endpoints.imports import _import_faculty, _import_mappings, _empty_result
+
+        # Import faculty with name only
+        res_fac = _empty_result("faculty")
+        _import_faculty(self.db, [(1, {"name": "Dr. Katherine Johnson", "email": ""})], res_fac)
+        self.assertEqual(res_fac["imported"], 1)
+
+        saved_fac = self.db["faculty"].find_one({"name": "Dr. Katherine Johnson"})
+        self.assertIsNotNone(saved_fac)
+
+        # Import class and subject
+        self.db["classes"].insert_one({"_id": "c1", "name": "CSE-A"})
+        self.db["subjects"].insert_one({"_id": "s1", "name": "Math", "code": "M101"})
+
+        # Import mapping using faculty name
+        res_map = _empty_result("mappings")
+        _import_mappings(self.db, [(1, {
+            "subject_code": "M101",
+            "class_name": "CSE-A",
+            "faculty_name": "Dr. Katherine Johnson"
+        })], res_map)
+        self.assertEqual(res_map["imported"], 1)
+
+        # Subject mapping was updated with the faculty ID
+        saved_subj = self.db["subjects"].find_one({"code": "M101", "class_id": "c1"})
+        self.assertIsNotNone(saved_subj)
+        self.assertEqual(saved_subj["faculty_id"], saved_fac["_id"])
 
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -32,8 +32,8 @@ const REQUIRED_FIELDS = {
   classes: ['name'],
   rooms: ['name'],
   subjects: ['name', 'code'],
-  faculty: ['name', 'email'],
-  mappings: ['subject_code', 'class_name', 'faculty_email']
+  faculty: ['name'],
+  mappings: ['subject_code', 'class_name']
 };
 
 export default function DocumentExtractorModal({ isOpen, onClose, onImportSuccess }) {
@@ -229,7 +229,7 @@ export default function DocumentExtractorModal({ isOpen, onClose, onImportSucces
       mergedData.classes = dedupeBy(mergedData.classes, c => `${c.name}-${c.section || ''}`.toLowerCase());
       mergedData.rooms = dedupeBy(mergedData.rooms, r => (r.code || r.name || '').toLowerCase());
       mergedData.subjects = dedupeBy(mergedData.subjects, s => (s.code || s.name || '').toLowerCase());
-      mergedData.faculty = dedupeBy(mergedData.faculty, f => (f.email || f.name || '').toLowerCase());
+      mergedData.faculty = dedupeBy(mergedData.faculty, f => (f.name || f.email || '').toLowerCase());
 
       setExtractedData(mergedData);
       setWarnings(allWarnings);
@@ -329,7 +329,7 @@ export default function DocumentExtractorModal({ isOpen, onClose, onImportSucces
     const tabObj = TABS.find(t => t.id === tabId);
     const newRow = {};
     tabObj.fields.forEach(f => {
-      newRow[f] = f === 'capacity' || f === 'semester' || f === 'student_count' || f === 'hours_per_week' || f === 'period_duration' ? 0 : '';
+      newRow[f] = '';
     });
     updatedData[tabId] = [...updatedData[tabId], newRow];
     setExtractedData(updatedData);

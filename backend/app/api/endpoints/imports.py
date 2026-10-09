@@ -620,8 +620,8 @@ def _find_room(db, code_or_name: str) -> Optional[dict]:
     return _find_one_by_any(db, "rooms", ["code", "name"], code_or_name)
 
 
-def _find_faculty(db, email: str) -> Optional[dict]:
-    return _find_one_by_any(db, "faculty", ["email"], email)
+def _find_faculty(db, email_or_name: str) -> Optional[dict]:
+    return _find_one_by_any(db, "faculty", ["email", "name"], email_or_name)
 
 
 def _find_class(db, name: str, section: str = "") -> Optional[dict]:
@@ -993,24 +993,22 @@ def _import_subjects(
 def _import_faculty(db, rows: List[Tuple[int, Dict[str, str]]], result: Dict[str, Any]):
     for row_number, row in rows:
         name = _require_value(row, "name", row_number, result)
-        email = _require_value(row, "email", row_number, result)
-        if not name or not email:
+        if not name:
             result["skipped"] += 1
             continue
 
-        email = email.lower()
+        email = (_row_value(row, "email") or "").strip().lower()
         dept = _find_department(db, _row_value(row, "department_code"))
         if _row_value(row, "department_code") and not dept:
             _record_issue(
                 result,
                 "warnings",
                 row_number,
-                f"Department '{_row_value(row, 'department_code')}' not found for faculty '{email}'.",
+                f"Department '{_row_value(row, 'department_code')}' not found for faculty '{name}'.",
             )
 
         document = {
             "name": name,
-            "email": email,
             "department_id": str(dept["_id"]) if dept else None,
             "max_hours_per_week": _parse_int(
                 _row_value(row, "max_hours_per_week"),
@@ -1029,7 +1027,10 @@ def _import_faculty(db, rows: List[Tuple[int, Dict[str, str]]], result: Dict[str
                 "unavailable_slots",
             ),
         }
-        existing = _find_faculty(db, email)
+        if email:
+            document["email"] = email
+
+        existing = _find_faculty(db, email) if email else _find_faculty(db, name)
         _save_document(db, "faculty", existing, document, result)
 
 
@@ -1039,14 +1040,14 @@ def _import_mappings(
     for row_number, row in rows:
         subject_code = _require_value(row, "subject_code", row_number, result)
         class_name = _require_value(row, "class_name", row_number, result)
-        faculty_email = _require_value(row, "faculty_email", row_number, result)
-        if not subject_code or not class_name or not faculty_email:
+        if not subject_code or not class_name:
             result["skipped"] += 1
             continue
 
+        faculty_identifier = (_row_value(row, "faculty_email") or _row_value(row, "faculty_name") or "").strip()
         subj = _find_core_subject(db, subject_code)
         cls = _find_class(db, class_name, _row_value(row, "class_section"))
-        fac = _find_faculty(db, faculty_email.lower())
+        fac = _find_faculty(db, faculty_identifier) if faculty_identifier else None
         room = (
             _find_room(db, _row_value(row, "room_code"))
             if _row_value(row, "room_code")
@@ -1058,8 +1059,8 @@ def _import_mappings(
             missing.append(f"subject '{subject_code}'")
         if not cls:
             missing.append(f"class '{class_name}'")
-        if not fac:
-            missing.append(f"faculty '{faculty_email}'")
+        if faculty_identifier and not fac:
+            missing.append(f"faculty '{faculty_identifier}'")
         if missing:
             result["skipped"] += 1
             _record_issue(
@@ -1078,7 +1079,7 @@ def _import_mappings(
             )
 
         class_id = str(cls["_id"])
-        faculty_id = str(fac["_id"])
+        faculty_id = str(fac["_id"]) if fac else None
         if room:
             db["classes"].update_one(
                 {"_id": cls["_id"]},
@@ -1282,54 +1283,66 @@ async def upload_csv_folder(
 
 # ── Document Entity Extraction and Filling ──────────────────────────────────────
 
-ACADEMIC_EXTRACTOR_SYSTEM_PROMPT = """You are a STRICT academic data extractor.
+ACADEMIC_EXTRACTOR_SYSTEM_PROMPT = """You are a STRICT academic database entity extractor for a university timetable scheduler.
 
-## ABSOLUTE RULES — NEVER VIOLATE THESE
+## OBJECTIVE
+Extract ONLY the required academic scheduling entities that DIRECTLY match our database table schemas.
+Do NOT fetch or transcribe irrelevant text. Filter out noise so that only clean, database-ready records are returned.
 
-1. **EXTRACT ONLY.** You may ONLY output data that is EXPLICITLY and LITERALLY present in the provided document text/image.
-2. **NO HALLUCINATION.** Do NOT invent, guess, assume, infer, or generate ANY data that is not directly written in the document. This includes names, codes, times, numbers, or any other value.
-3. **NO EXAMPLES.** Do NOT use placeholder values such as "faculty@university.edu", "DEPT_CODE", "SUBJ101", "Room 101", or any example-like strings. If the real value is not in the document, use "" (empty string) or null.
-4. **NO MOCK DATA.** Do NOT fill in "reasonable" defaults or "typical" values. Leave every field empty ("") if it cannot be found verbatim in the source document.
-5. **MISSING = EMPTY.** If a field (code, section, department, batch, room, etc.) is not explicitly stated in the document, set it to "" or null. Do not construct or fabricate it.
+## ABSOLUTE RULES — READ CAREFULLY
 
-## Task
+1. **MATCH DATABASE SCHEMAS ONLY:**
+   Extract ONLY data that belongs to these 7 academic categories:
+   - `departments`: Academic teaching departments (e.g., Computer Science, Mechanical).
+   - `batches`: Timing/shift groups explicitly defined with hours or timetable column slots.
+   - `classes`: Student groups/sections receiving instruction (e.g., 'CSE-A', 'B.Tech Sem 4').
+   - `rooms`: Physical lecture halls, classrooms, or laboratories (e.g., 'LH-101', 'CS Lab 2').
+   - `subjects`: Courses taught with course codes or titles (e.g., 'Data Structures', 'CS301').
+   - `faculty`: Instructors, professors, and lecturers assigned to teach classes.
+   - `mappings`: Teaching allocations linking a subject to a class, faculty member, or room.
 
-Analyze the provided document and extract ONLY entities that are explicitly mentioned. Map them into the JSON structure below.
+2. **IGNORE ALL ADMINISTRATIVE & BOILERPLATE NOISE:**
+   - DISCARD college/university names, header banners, mottos, and logos.
+   - DISCARD exam guidelines, classroom rules, grading policies, textbook lists, syllabus course objectives, and circulars.
+   - DISCARD administrative signatories and officers: DO NOT extract "Principal", "Dean", "HOD", "Director", "Controller of Examinations", "Registrar", "Exam Incharge", or "Typist" as faculty members. Only extract actual teaching staff.
 
-## Output Format
+3. **STRICT ZERO-MOCK-DATA POLICY:**
+   - NEVER invent, guess, assume, or extrapolate ANY value.
+   - If an email is NOT written in the document, use "" (empty string). NEVER generate fake emails (e.g. NEVER output "@institution.edu" or any made-up domain).
+   - If a numeric field (period_duration, capacity, student_count, semester, hours_per_week, credits) is not explicitly present, use null or "". DO NOT guess 50 or 60 for duration. DO NOT guess 0 for capacity or student counts.
+   - If room_type is not specified, use "" (do NOT assume "lecture").
+   - If code, section, or department is not specified, use "".
+   - If a category is not present in the document, return an empty array [] for that key.
 
-Return ONLY a single raw JSON object — no markdown fences, no reasoning text, no notes, no explanation.
+## JSON OUTPUT SCHEMA
+
+Return ONLY a single raw JSON object matching this exact schema:
 
 {
   "departments": [
-    {"name": "<exact name from doc>", "code": "<exact code from doc or ''>"}
+    {"name": "<exact name>", "code": "<exact code or ''>"}
   ],
   "batches": [
-    {"name": "<exact name from doc>", "start_time": "<exact start time e.g. '09:00' or ''>", "end_time": "<exact end time e.g. '16:30' or ''>", "period_duration": <number of minutes e.g. 50 or 60>, "break_times": "<exact break times e.g. '11:00-11:15' or ''>", "lunch_break": "<exact lunch break time e.g. '13:00-14:00' or ''>"}
+    {"name": "<exact name>", "start_time": "<HH:MM or ''>", "end_time": "<HH:MM or ''>", "period_duration": null, "break_times": "<or ''>", "lunch_break": "<or ''>"}
   ],
   "classes": [
-    {"name": "<exact name from doc>", "section": "<exact section from doc or ''>", "department_code": "<exact code from doc or ''>", "batch_name": "<exact name from doc or ''>", "semester": <number or null>, "student_count": <number or 0>}
+    {"name": "<exact name>", "section": "<exact section or ''>", "department_code": "<exact code or ''>", "batch_name": "<exact name or ''>", "semester": null, "student_count": null, "room_code": "<exact code or ''>"}
   ],
   "rooms": [
-    {"name": "<exact name from doc>", "code": "<exact code from doc or ''>", "room_type": "lecture", "capacity": <number or 0>, "department_code": "<exact code from doc or ''>"}
+    {"name": "<exact name>", "code": "<exact code or ''>", "room_type": "<'lecture'|'lab'|'seminar' or ''>", "capacity": null, "department_code": "<exact code or ''>"}
   ],
   "subjects": [
-    {"name": "<exact name from doc>", "code": "<exact code from doc or ''>", "hours_per_week": <number or 0>, "requires_lab": false, "department_codes": "<exact code from doc or ''>", "batch_name": "<exact name from doc or ''>"}
+    {"name": "<exact name>", "code": "<exact code or ''>", "hours_per_week": null, "credits": null, "requires_lab": null, "department_codes": "<exact code or ''>", "batch_name": "<exact name or ''>"}
   ],
   "faculty": [
-    {"name": "<exact name from doc>", "email": "<exact email from doc or ''>", "department_code": "<exact code from doc or ''>"}
+    {"name": "<exact name>", "email": "<exact email from doc or ''>", "department_code": "<exact code or ''>"}
   ],
   "mappings": [
-    {"subject_code": "<exact code from doc or ''>", "class_name": "<exact name from doc>", "class_section": "<exact section from doc or ''>", "faculty_email": "<exact email from doc or ''>", "room_code": "<exact code from doc or ''>"}
+    {"subject_code": "<exact code or ''>", "class_name": "<exact name or ''>", "class_section": "<exact section or ''>", "faculty_email": "<exact email or teacher name or ''>", "room_code": "<exact code or ''>"}
   ]
 }
 
-## Additional Rules
-
-- For batches: Look at timetable period column/row slot headers or schedule headers to extract start_time (e.g. '09:00'), end_time (e.g. '16:30'), period_duration (e.g. 50 or 60), break_times (e.g. '11:00-11:15'), and lunch_break (e.g. '13:00-14:00').
-- room_type must be one of: ["lecture", "lab", "seminar"]. Default to "lecture" only if the room is mentioned but its type is not specified.
-- If the document contains NO information for a category (e.g. no rooms mentioned), return an empty list [] for that key.
-- Do NOT output any markdown code blocks, reasoning, commentary, or extra text. Output ONLY the raw JSON object.
+No markdown fences, no explanations, no commentary. Output ONLY the JSON object.
 """
 
 
@@ -1411,6 +1424,238 @@ def _dedupe_extracted_list(items: list) -> list:
             seen.add(key)
             unique.append(item)
     return unique
+
+
+def _clean_str(val: Any) -> str:
+    """Return stripped string or empty string if None/placeholder."""
+    if val is None:
+        return ""
+    s = str(val).strip()
+    if s.lower() in {"null", "none", "n/a", "na", "undefined", "-", "--", "''", '""'}:
+        return ""
+    if s.startswith("<") and s.endswith(">"):
+        return ""
+    return s
+
+
+def _clean_int(val: Any) -> Any:
+    """Return integer if valid non-negative number, else None."""
+    if val is None or val == "":
+        return None
+    try:
+        n = float(val)
+        return int(n) if n >= 0 else None
+    except (ValueError, TypeError):
+        return None
+
+
+def _clean_bool(val: Any) -> Optional[bool]:
+    """Return boolean if valid, else None."""
+    if val is None or val == "":
+        return None
+    if isinstance(val, bool):
+        return val
+    s = str(val).strip().lower()
+    if s in {"true", "1", "yes", "lab"}:
+        return True
+    if s in {"false", "0", "no", "theory"}:
+        return False
+    return None
+
+
+IGNORABLE_SIGNATORIES_AND_BOILERPLATE = {
+    "principal", "director", "dean", "hod", "head of department",
+    "controller of examinations", "coe", "examination cell", "exam cell",
+    "signature", "signatures", "date", "incharge", "in-charge", "coordinator",
+    "typist", "staff", "management", "university", "college", "institution",
+    "attendance", "rules", "instructions", "general rules", "notice", "notices",
+    "time table", "timetable", "notice board", "examination", "semester", "syllabus"
+}
+
+
+def _is_boilerplate_word(text: str) -> bool:
+    if not text:
+        return True
+    norm = re.sub(r'[^a-z0-9 ]', ' ', text.lower()).strip()
+    norm = re.sub(r'\s+', ' ', norm)
+    return norm in IGNORABLE_SIGNATORIES_AND_BOILERPLATE
+
+
+def _sanitize_and_filter_extracted_entities(data: Dict[str, List[Dict[str, Any]]]) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Sanitize and filter extracted entities to strictly match database schemas:
+    1. Strip all mock data and placeholder values (never synthesize fake emails or numbers).
+    2. Discard administrative boilerplate, signatures, and empty/unmatched entities.
+    3. Retain only the required/supported database fields for each collection.
+    """
+    cleaned: Dict[str, List[Dict[str, Any]]] = {
+        "departments": [], "batches": [], "classes": [], "rooms": [],
+        "subjects": [], "faculty": [], "mappings": []
+    }
+
+    # 1. Departments: {name, code}
+    for item in data.get("departments", []):
+        if not isinstance(item, dict):
+            continue
+        name = _clean_str(item.get("name"))
+        code = _clean_str(item.get("code")).upper()
+        if not name and not code:
+            continue
+        if _is_boilerplate_word(name) or _is_boilerplate_word(code):
+            continue
+        cleaned["departments"].append({
+            "name": name or code,
+            "code": code or name[:6].upper().replace(" ", "")
+        })
+
+    # 2. Batches: {name, start_time, end_time, period_duration, break_times, lunch_break}
+    for item in data.get("batches", []):
+        if not isinstance(item, dict):
+            continue
+        name = _clean_str(item.get("name"))
+        if not name or _is_boilerplate_word(name):
+            continue
+        start_time = _clean_str(item.get("start_time"))
+        end_time = _clean_str(item.get("end_time"))
+        period_duration = _clean_int(item.get("period_duration"))
+        break_times = item.get("break_times")
+        if isinstance(break_times, str):
+            break_times = _clean_str(break_times)
+        lunch_break = item.get("lunch_break")
+        if isinstance(lunch_break, str):
+            lunch_break = _clean_str(lunch_break)
+        cleaned["batches"].append({
+            "name": name,
+            "start_time": start_time,
+            "end_time": end_time,
+            "period_duration": period_duration if period_duration is not None else "",
+            "break_times": break_times or "",
+            "lunch_break": lunch_break or ""
+        })
+
+    # 3. Classes: {name, section, semester, student_count, department_code, batch_name, room_code}
+    for item in data.get("classes", []):
+        if not isinstance(item, dict):
+            continue
+        name = _clean_str(item.get("name"))
+        if not name or _is_boilerplate_word(name):
+            continue
+        section = _clean_str(item.get("section"))
+        dept_code = _clean_str(item.get("department_code")).upper()
+        batch_name = _clean_str(item.get("batch_name"))
+        room_code = _clean_str(item.get("room_code"))
+        semester = _clean_int(item.get("semester"))
+        student_count = _clean_int(item.get("student_count"))
+        cleaned["classes"].append({
+            "name": name,
+            "section": section,
+            "semester": semester if semester is not None else "",
+            "student_count": student_count if student_count is not None else "",
+            "department_code": dept_code,
+            "batch_name": batch_name,
+            "room_code": room_code
+        })
+
+    # 4. Rooms: {name, code, room_type, capacity, department_code}
+    for item in data.get("rooms", []):
+        if not isinstance(item, dict):
+            continue
+        name = _clean_str(item.get("name"))
+        code = _clean_str(item.get("code"))
+        if not name and not code:
+            continue
+        if _is_boilerplate_word(name) or _is_boilerplate_word(code):
+            continue
+        rtype = _clean_str(item.get("room_type")).lower()
+        if rtype not in {"lecture", "lab", "seminar"}:
+            rtype = "lecture" if "lab" not in name.lower() else "lab"
+        capacity = _clean_int(item.get("capacity"))
+        dept_code = _clean_str(item.get("department_code")).upper()
+        cleaned["rooms"].append({
+            "name": name or code,
+            "code": code or name,
+            "room_type": rtype,
+            "capacity": capacity if capacity is not None else "",
+            "department_code": dept_code
+        })
+
+    # 5. Subjects: {name, code, hours_per_week, credits, requires_lab, department_codes, batch_name}
+    for item in data.get("subjects", []):
+        if not isinstance(item, dict):
+            continue
+        name = _clean_str(item.get("name"))
+        code = _clean_str(item.get("code")).upper()
+        if not name and not code:
+            continue
+        if _is_boilerplate_word(name) or _is_boilerplate_word(code):
+            continue
+        hours = _clean_int(item.get("hours_per_week"))
+        credits_val = _clean_int(item.get("credits"))
+        req_lab = _clean_bool(item.get("requires_lab"))
+        if req_lab is None:
+            req_lab = True if "lab" in (name + " " + code).lower() else False
+        dept_codes = _clean_str(item.get("department_codes") or item.get("department_code")).upper()
+        batch_name = _clean_str(item.get("batch_name"))
+        cleaned["subjects"].append({
+            "name": name or code,
+            "code": code or name[:8].upper().replace(" ", ""),
+            "hours_per_week": hours if hours is not None else "",
+            "credits": credits_val if credits_val is not None else "",
+            "requires_lab": req_lab,
+            "department_codes": dept_codes,
+            "batch_name": batch_name
+        })
+
+    # 6. Faculty: {name, email, department_code}
+    # NEVER generate fake @institution.edu or dummy emails!
+    for item in data.get("faculty", []):
+        if not isinstance(item, dict):
+            continue
+        name = _clean_str(item.get("name"))
+        if not name or len(name) < 2:
+            continue
+        if _is_boilerplate_word(name):
+            continue
+        clean_name_tokens = set(re.sub(r'[^a-z ]', ' ', name.lower()).split()) - {"of", "the", "and", "&", "for"}
+        if clean_name_tokens and clean_name_tokens.issubset(IGNORABLE_SIGNATORIES_AND_BOILERPLATE):
+            continue
+        email = _clean_str(item.get("email")).lower()
+        if email and ("@" not in email or "." not in email or "institution.edu" in email):
+            email = ""
+        dept_code = _clean_str(item.get("department_code")).upper()
+        cleaned["faculty"].append({
+            "name": name,
+            "email": email,
+            "department_code": dept_code
+        })
+
+    # 7. Mappings: {subject_code, class_name, class_section, faculty_email, room_code}
+    for item in data.get("mappings", []):
+        if not isinstance(item, dict):
+            continue
+        sub_code = _clean_str(item.get("subject_code") or item.get("subject_name")).upper()
+        cls_name = _clean_str(item.get("class_name"))
+        if not sub_code and not cls_name:
+            continue
+        cls_sec = _clean_str(item.get("class_section") or item.get("section"))
+        fac_identifier = _clean_str(item.get("faculty_email") or item.get("faculty_name"))
+        if "institution.edu" in fac_identifier.lower():
+            fac_identifier = ""
+        rm_code = _clean_str(item.get("room_code"))
+        cleaned["mappings"].append({
+            "subject_code": sub_code,
+            "class_name": cls_name,
+            "class_section": cls_sec,
+            "faculty_email": fac_identifier,
+            "room_code": rm_code
+        })
+
+    # Deduplicate each list
+    for key in cleaned:
+        cleaned[key] = _dedupe_extracted_list(cleaned[key])
+
+    return cleaned
+
 
 
 @router.post('/extract-academic-data')
@@ -1509,10 +1754,10 @@ async def extract_academic_data(
                         {
                             "role": "user",
                             "content": (
-                                "Extract ONLY the academic entities that are explicitly and literally present in the following timetable table and text. "
-                                "Do NOT invent, guess, infer, or hallucinate any values. "
-                                "If a field (email, code, section, department, batch, room, etc.) is not clearly stated in the text, set it to \"\" or null. "
-                                "Return ONLY a valid JSON object matching the required schema with no extra commentary.\n\n"
+                                "Extract ONLY the real academic scheduling entities from the document text below that match our database fields (departments, batches, classes, rooms, subjects, faculty, mappings).\n"
+                                "Completely ignore administrative boilerplate, college headers, exam rules, and signatures.\n"
+                                "CRITICAL: Leave any empty/missing field as \"\" or null. NEVER generate mock data, placeholder emails, default durations, or dummy values.\n"
+                                "Return ONLY valid raw JSON matching the schema.\n\n"
                                 f"{chunk}"
                             )
                         }
@@ -1662,38 +1907,14 @@ async def extract_academic_data(
                 elif msg_type == "task_done":
                     active_tasks -= 1
                     
-            print("\n[AI EXTRACTOR 95%] Merging and deduplicating results...", flush=True)
-            yield json.dumps({"status": "progress", "progress": 95, "message": "Merging and deduplicating results..."}) + "\n"
-            
-            # Post-process faculty: generate dummy email if missing
-            import re as _re
-            faculty_email_map = {}
-            for idx, fac in enumerate(extracted_data_result.get("faculty", []), start=1):
-                fac_name = (fac.get("name") or "").strip()
-                fac_email = (fac.get("email") or "").strip()
-                if not fac_email:
-                    if fac_name:
-                        clean_name = _re.sub(r'[^a-zA-Z0-9_]', '.', fac_name.lower().replace(' ', '.')).strip('.')
-                        clean_name = _re.sub(r'\.+', '.', clean_name)
-                        fac_email = f"{clean_name}@institution.edu" if clean_name else f"faculty_{idx}@institution.edu"
-                    else:
-                        fac_email = f"faculty_{idx}@institution.edu"
-                    fac["email"] = fac_email
-                if fac_name:
-                    faculty_email_map[fac_name.lower()] = fac_email
+            print("\n[AI EXTRACTOR 95%] Sanitizing, filtering, and aligning with database schema...", flush=True)
+            yield json.dumps({"status": "progress", "progress": 95, "message": "Sanitizing, filtering, and aligning with database schema..."}) + "\n"
 
-            # Post-process mappings: ensure faculty_email is populated if missing
-            for m in extracted_data_result.get("mappings", []):
-                if not m.get("faculty_email"):
-                    fac_name = (m.get("faculty_name") or "").strip().lower()
-                    if fac_name in faculty_email_map:
-                        m["faculty_email"] = faculty_email_map[fac_name]
-
-            for key in extracted_data_result:
-                extracted_data_result[key] = _dedupe_extracted_list(extracted_data_result[key])
+            # Strictly sanitize, filter administrative boilerplate, and align with DB fields (zero mock data)
+            extracted_data_result = _sanitize_and_filter_extracted_entities(extracted_data_result)
 
             total_extracted = sum(len(v) for v in extracted_data_result.values())
-            print(f"\n[AI EXTRACTOR SUCCESS] Extracted {total_extracted} items from {file.filename}\n", flush=True)
+            print(f"\n[AI EXTRACTOR SUCCESS] Extracted {total_extracted} valid items from {file.filename}\n", flush=True)
 
             yield json.dumps({
                 "status": "success",
@@ -1892,9 +2113,8 @@ def _extract_excel_data(content: bytes) -> dict:
 
             extracted_data_result[import_type].append(norm_row)
 
-    # Deduplicate extracted lists
-    for key in extracted_data_result:
-        extracted_data_result[key] = _dedupe_extracted_list(extracted_data_result[key])
+    # Deduplicate and filter extracted lists strictly to database schema
+    extracted_data_result = _sanitize_and_filter_extracted_entities(extracted_data_result)
 
     return {
         "extracted_data": extracted_data_result,
